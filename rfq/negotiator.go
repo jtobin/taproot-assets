@@ -146,10 +146,9 @@ func (n *Negotiator) queryBuyFromPriceOracle(assetSpecifier asset.Specifier,
 	}
 
 	// Now we will check for an error in the response from the price oracle.
-	// If present, we will convert it to a string and return it as an error.
+	// If present, we will simply relay it.
 	if oracleResponse.Err != nil {
-		return nil, fmt.Errorf("failed to query price oracle for "+
-			"buy price: %s", oracleResponse.Err)
+		return nil, oracleResponse.Err
 	}
 
 	// By this point, the price oracle did not return an error or a buy
@@ -282,10 +281,9 @@ func (n *Negotiator) querySellFromPriceOracle(assetSpecifier asset.Specifier,
 	}
 
 	// Now we will check for an error in the response from the price oracle.
-	// If present, we will convert it to a string and return it as an error.
+	// If present, we will simply relay it.
 	if oracleResponse.Err != nil {
-		return nil, fmt.Errorf("failed to query price oracle for "+
-			"sell price: %s", oracleResponse.Err)
+		return nil, oracleResponse.Err
 	}
 
 	// By this point, the price oracle did not return an error or a sell

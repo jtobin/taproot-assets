@@ -370,7 +370,8 @@ func (r *RpcPriceOracle) QuerySellPrice(ctx context.Context,
 
 		return &OracleResponse{
 			Err: &OracleError{
-				Msg: result.Error.Message,
+				Msg:  result.Error.Message,
+				Code: OracleErrorCode(result.Error.Code),
 			},
 		}, nil
 
@@ -481,7 +482,8 @@ func (r *RpcPriceOracle) QueryBuyPrice(ctx context.Context,
 
 		return &OracleResponse{
 			Err: &OracleError{
-				Msg: result.Error.Message,
+				Msg:  result.Error.Message,
+				Code: OracleErrorCode(result.Error.Code),
 			},
 		}, nil
 
