@@ -509,7 +509,6 @@ func createCustomRejectErr(err error) rfqmsg.RejectErr {
 		// RejectErr will simply relay the oracle's message. Otherwise,
 		// we'll return an opaque rejection message.
 		switch oracleError.Code {
-
 		// The rejection message will state that the oracle doesn't
 		// support the asset.
 		case ErrUnsupportedOracleAsset:
