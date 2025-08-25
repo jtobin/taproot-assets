@@ -371,12 +371,25 @@ func (r *RpcPriceOracle) QuerySellPrice(ctx context.Context,
 		return &OracleResponse{
 			Err: &OracleError{
 				Msg:  result.Error.Message,
-				Code: OracleErrorCode(result.Error.Code),
+				Code: marshallErrorCode(result.Error.Code),
 			},
 		}, nil
 
 	default:
 		return nil, fmt.Errorf("unexpected response type: %T", result)
+	}
+}
+
+// marshallErrorCode marshalls an over-the-wire error code into an
+// OracleErrorCode.
+func marshallErrorCode(code oraclerpc.ErrorCode) OracleErrorCode {
+	switch code {
+	case oraclerpc.ErrorCode_ERROR_UNSPECIFIED:
+		return ErrUnspecifiedOracleError
+	case oraclerpc.ErrorCode_ERROR_UNSUPPORTED:
+		return ErrUnsupportedOracleAsset
+	default:
+		return ErrUnspecifiedOracleError
 	}
 }
 
@@ -483,7 +496,7 @@ func (r *RpcPriceOracle) QueryBuyPrice(ctx context.Context,
 		return &OracleResponse{
 			Err: &OracleError{
 				Msg:  result.Error.Message,
-				Code: OracleErrorCode(result.Error.Code),
+				Code: marshallErrorCode(result.Error.Code),
 			},
 		}, nil
 
