@@ -76,18 +76,29 @@ func (v *RejectErr) Record() tlv.Record {
 	)
 }
 
+const (
+	// UnspecifiedRejectCode indicates that a request-for-quote was
+	// rejected, without necessarily providing any further detail as to
+	// why.
+	UnspecifiedRejectCode uint8 = iota
+
+	// UnavailableRejectCode indicates that a request-for-quote was
+	// rejected as a price oracle was unavailable.
+	UnavailableRejectCode
+)
+
 var (
 	// ErrUnknownReject is the error code for when the quote is rejected
 	// for an unspecified reason.
 	ErrUnknownReject = RejectErr{
-		Code: 0,
+		Code: UnspecifiedRejectCode,
 		Msg:  "unknown reject error",
 	}
 
-	// ErrPriceOracleUnavailable is the error code for when the price oracle
-	// is unavailable.
+	// ErrPriceOracleUnavailable is the error code for when the price
+	// oracle is unavailable.
 	ErrPriceOracleUnavailable = RejectErr{
-		Code: 1,
+		Code: UnavailableRejectCode,
 		Msg:  "price oracle unavailable",
 	}
 )
@@ -96,7 +107,7 @@ var (
 // it with a custom error message.
 func ErrRejectWithCustomMsg(msg string) RejectErr {
 	return RejectErr{
-		Code: 0,
+		Code: UnspecifiedRejectCode,
 		Msg:  msg,
 	}
 }
