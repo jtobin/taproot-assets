@@ -384,9 +384,9 @@ func (r *RpcPriceOracle) QuerySellPrice(ctx context.Context,
 // OracleErrorCode.
 func marshallErrorCode(code oraclerpc.ErrorCode) OracleErrorCode {
 	switch code {
-	case oraclerpc.ErrorCode_ERROR_UNSPECIFIED:
+	case oraclerpc.ErrorCode_UNSPECIFIED_ORACLE_ERROR_CODE:
 		return UnspecifiedOracleErrorCode
-	case oraclerpc.ErrorCode_ERROR_UNSUPPORTED:
+	case oraclerpc.ErrorCode_UNSUPPORTED_ASSET_ORACLE_ERROR_CODE:
 		return UnsupportedAssetOracleErrorCode
 	default:
 		return UnspecifiedOracleErrorCode
