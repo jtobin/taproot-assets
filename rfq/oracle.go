@@ -97,13 +97,13 @@ type OracleError struct {
 type OracleErrorCode uint8
 
 const (
-	// ErrUnspecifiedOracleError represents the case where the oracle has
+	// UnspecifiedOracleErrorCode represents the case where the oracle has
 	// declined to give a more specific reason for the error.
-	ErrUnspecifiedOracleError OracleErrorCode = iota
+	UnspecifiedOracleErrorCode OracleErrorCode = iota
 
-	// ErrUnsupportedOracleAsset represents the case in which an oracle does
-	// not provide quotes for the requested asset.
-	ErrUnsupportedOracleAsset
+	// UnsupportedAssetOracleErrorCode represents the case in which an
+	// oracle does not provide quotes for the requested asset.
+	UnsupportedAssetOracleErrorCode
 )
 
 // Error returns a human-readable string representation of the error.
@@ -385,11 +385,11 @@ func (r *RpcPriceOracle) QuerySellPrice(ctx context.Context,
 func marshallErrorCode(code oraclerpc.ErrorCode) OracleErrorCode {
 	switch code {
 	case oraclerpc.ErrorCode_ERROR_UNSPECIFIED:
-		return ErrUnspecifiedOracleError
+		return UnspecifiedOracleErrorCode
 	case oraclerpc.ErrorCode_ERROR_UNSUPPORTED:
-		return ErrUnsupportedOracleAsset
+		return UnsupportedAssetOracleErrorCode
 	default:
-		return ErrUnspecifiedOracleError
+		return UnspecifiedOracleErrorCode
 	}
 }
 
