@@ -28,6 +28,29 @@ const (
 	DefaultAcceptPriceDeviationPpm = 50_000
 )
 
+// QueryError represents an error with additional context about the price
+// oracle query that led to it.
+type QueryError struct {
+	// Err is the error returned from a query attempt, possibly from a
+	// price oracle.
+	Err error
+
+	// Context is the context of the price oracle query that led to the
+	// error.
+	Context string
+}
+
+// Error returns a human-readable version of the QueryError, implementing the
+// main error interface.
+func (err *QueryError) Error() string {
+	// If there's no context, just fall back to the wrapped error.
+	if err.Context == "" {
+		return err.Err.Error()
+	}
+	// Otherwise prepend the context.
+	return err.Context + ": " + err.Err.Error()
+}
+
 // NegotiatorCfg holds the configuration for the negotiator.
 type NegotiatorCfg struct {
 	// PriceOracle is the price oracle that the negotiator will use to
@@ -142,21 +165,29 @@ func (n *Negotiator) queryBuyFromPriceOracle(assetSpecifier asset.Specifier,
 		counterparty, metadata, intent,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query price oracle for "+
-			"buy price: %w", err)
+		return nil, &QueryError{
+			Err:     err,
+			Context: "failed to query price oracle for buy price",
+		}
 	}
 
 	// Now we will check for an error in the response from the price oracle.
-	// If present, we will simply relay it.
+	// If present, we will relay it with context.
 	if oracleResponse.Err != nil {
-		return nil, oracleResponse.Err
+		return nil, &QueryError{
+			Err:     oracleResponse.Err,
+			Context: "failed to query price oracle for buy price",
+		}
 	}
 
 	// By this point, the price oracle did not return an error or a buy
 	// price. We will therefore return an error.
 	if oracleResponse.AssetRate.Rate.ToUint64() == 0 {
-		return nil, fmt.Errorf("price oracle did not specify a " +
-			"buy price")
+		return nil, &QueryError{
+			Err: errors.New("price oracle didn't specify " +
+				"a price"),
+			Context: "failed to query price oracle for buy price",
+		}
 	}
 
 	// TODO(ffranr): Check that the buy price is reasonable.
@@ -277,21 +308,29 @@ func (n *Negotiator) querySellFromPriceOracle(assetSpecifier asset.Specifier,
 		counterparty, metadata, intent,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query price oracle for "+
-			"sell price: %w", err)
+		return nil, &QueryError{
+			Err:     err,
+			Context: "failed to query price oracle for sell price",
+		}
 	}
 
 	// Now we will check for an error in the response from the price oracle.
-	// If present, we will simply relay it.
+	// If present, we will relay it with context.
 	if oracleResponse.Err != nil {
-		return nil, oracleResponse.Err
+		return nil, &QueryError{
+			Err:     oracleResponse.Err,
+			Context: "failed to query price oracle for sell price",
+		}
 	}
 
 	// By this point, the price oracle did not return an error or a sell
 	// price. We will therefore return an error.
 	if oracleResponse.AssetRate.Rate.Coefficient.ToUint64() == 0 {
-		return nil, fmt.Errorf("price oracle did not specify an " +
-			"asset to BTC rate")
+		return nil, &QueryError{
+			Err: errors.New("price oracle didn't specify " +
+				"a price"),
+			Context: "failed to query price oracle for sell price",
+		}
 	}
 
 	// TODO(ffranr): Check that the sell price is reasonable.
@@ -501,28 +540,28 @@ func (n *Negotiator) HandleIncomingSellRequest(
 // createCustomRejectErr creates a RejectErr with code 0 and a custom message
 // based on an error response from a price oracle.
 func createCustomRejectErr(err error) rfqmsg.RejectErr {
+	var queryError *QueryError
+	// Check if the error we've received is the expected QueryError, and
+	// return an opaque rejection error if not.
+	if !errors.As(err, &queryError) {
+		return rfqmsg.ErrUnknownReject
+	}
+
 	var oracleError *OracleError
+	// Check if the QueryError contains the expected OracleError, and
+	// return an opaque rejection error if not.
+	if !errors.As(queryError, &oracleError) {
+		return rfqmsg.ErrUnknownReject
+	}
 
-	if errors.As(err, &oracleError) {
-		// The error is of the expected type, so switch on the error
-		// code returned by the oracle. If the code is benign, then the
-		// RejectErr will simply relay the oracle's message. Otherwise,
-		// we'll return an opaque rejection message.
-		switch oracleError.Code {
-		// The rejection message will state that the oracle doesn't
-		// support the asset.
-		case UnsupportedAssetOracleErrorCode:
-			msg := oracleError.Msg
-			return rfqmsg.ErrRejectWithCustomMsg(msg)
-
-		// The rejection message will be opaque, with the error
-		// unspecified.
-		default:
-			return rfqmsg.ErrUnknownReject
-		}
-	} else {
-		// The error is of an unexpected type, so just return an opaque
-		// error message.
+	switch oracleError.Code {
+	// The price oracle has indicated that it doesn't support the asset,
+	// so return a rejection error indicating that.
+	case UnsupportedAssetOracleErrorCode:
+		return rfqmsg.ErrRejectWithCustomMsg(oracleError.Msg)
+	// The error code is either unspecified or unknown, so return an
+	// opaque rejection error.
+	default:
 		return rfqmsg.ErrUnknownReject
 	}
 }
