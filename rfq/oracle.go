@@ -222,27 +222,21 @@ func NewRpcPriceOracle(addrStr string, tlsConfig *TLSConfig) (*RpcPriceOracle,
 		return nil, err
 	}
 
-	// Connect to the RPC server.
-	dialOpts, err := serverDialOpts()
+	// Create transport credentials and dial options from the supplied TLS
+	// config.
+	transportCredentials, err := configureTransportCredentials(tlsConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	// Determine whether we should skip certificate verification.
-	dialInsecure := tlsConfig.InsecureSkipVerify
-
-	// Allow connecting to a non-TLS (h2c, http over cleartext) gRPC server,
-	// should be used for testing only.
-	if dialInsecure {
-		dialOpts, err = insecureServerDialOpts()
-		if err != nil {
-			return nil, err
-		}
+	dialOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(transportCredentials),
 	}
 
 	// Formulate the server address dial string.
 	serverAddr := fmt.Sprintf("%s:%s", addr.Hostname(), addr.Port())
 
+	// Connect to the RPC server.
 	conn, err := grpc.Dial(serverAddr, dialOpts...)
 	if err != nil {
 		return nil, err
