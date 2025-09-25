@@ -1628,9 +1628,10 @@ func updateSupplyCommit(ctx *cli.Context) error {
 }
 
 var fetchSupplyCommitCmd = cli.Command{
-	Name:  "fetch",
-	Usage: "fetches the on-chain supply commitment for an asset group",
-	Description: "This command fetches the on-chain supply " +
+	Name: "fetch",
+	Usage: "fetches the very first on-chain supply commitment for " +
+		"an asset group",
+	Description: "This command fetches the very first on-chain supply " +
 		"commitment for a specific asset group.",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
@@ -1650,6 +1651,9 @@ func fetchSupplyCommit(ctx *cli.Context) error {
 	req := &unirpc.FetchSupplyCommitRequest{
 		GroupKey: &unirpc.FetchSupplyCommitRequest_GroupKeyStr{
 			GroupKeyStr: ctx.String("group_key"),
+		},
+		Locator: &unirpc.FetchSupplyCommitRequest_VeryFirst{
+			VeryFirst: true,
 		},
 	}
 
