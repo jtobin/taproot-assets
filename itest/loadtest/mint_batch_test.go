@@ -9,9 +9,9 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/btcsuite/btcd/rpcclient"
+	"github.com/google/uuid"
 	"github.com/lightninglabs/taproot-assets/fn"
 	"github.com/lightninglabs/taproot-assets/itest"
 	"github.com/lightninglabs/taproot-assets/taprpc"
@@ -249,7 +249,7 @@ func mintNewGroup(t *testing.T, ctx context.Context, miner *rpcclient.Client,
 		Asset: &mintrpc.MintAsset{
 			AssetType: taprpc.AssetType_NORMAL,
 			Name: fmt.Sprintf(
-				"tapcoin-%d", time.Now().UnixNano(),
+				"tapcoin-%s", uuid.New().String(),
 			),
 			AssetMeta: &taprpc.AssetMeta{
 				Data: []byte("{}"),
@@ -279,13 +279,13 @@ func mintIntoGroup(t *testing.T, ctx context.Context, miner *rpcclient.Client,
 	t.Logf("Minting %v assets into group %x", cfg.BatchSize, tweakedKey)
 
 	for range cfg.BatchSize {
-		ts := time.Now().UnixNano()
+		id := uuid.New().String()
 
 		// nolint:lll
 		req := &mintrpc.MintAssetRequest{
 			Asset: &mintrpc.MintAsset{
 				AssetType: taprpc.AssetType_NORMAL,
-				Name:      fmt.Sprintf("tapcoin-%d", ts),
+				Name:      fmt.Sprintf("tapcoin-%s", id),
 				AssetMeta: &taprpc.AssetMeta{
 					Data: []byte("{}"),
 					Type: taprpc.AssetMetaType_META_TYPE_JSON,
