@@ -36,6 +36,17 @@
         # gcflags
         gcflags_dev = [ "all=-N -l" ];
 
+        # nixpkgs applies various patches to go toolchains; we need
+        # to remove them to produce binaries verifiable against those
+        # produced by conventional go compilers.
+        go-unpatched = pkgs.go.overrideAttrs (old: {
+          patches = [ ];
+        });
+
+        buildGoModule = pkgs.buildGoModule.override {
+          go = go-unpatched;
+        };
+
         # tapd builder
         build_tap = {
               goos ? null
@@ -44,7 +55,7 @@
             , tags ? tags_base
             , ldflags ? ldflags_base
             , gcflags ? [ ]
-            }: pkgs.buildGoModule {
+            }: buildGoModule {
           pname = package;
           version = tag;
           src = tap_src;
@@ -62,6 +73,7 @@
           '';
 
           doCheck = false;
+          dontStrip = true;
         };
 
         # release builder
