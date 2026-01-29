@@ -446,7 +446,9 @@ func (r *rpcServer) GetInfo(ctx context.Context,
 func (r *rpcServer) MintAsset(ctx context.Context,
 	req *mintrpc.MintAssetRequest) (*mintrpc.MintAssetResponse, error) {
 
-	// Use consolidated validator for upfront validation.
+	// Use consolidated validator for upfront validation. This validates
+	// all stateless constraints including group field combinations,
+	// tapscript root size, and decimal display for collectibles.
 	if err := ValidateMintAssetRequest(req); err != nil {
 		return nil, err
 	}
@@ -455,70 +457,6 @@ func (r *rpcServer) MintAsset(ctx context.Context,
 	specificGroupAnchor := len(req.Asset.GroupAnchor) != 0
 	specificGroupInternalKey := req.Asset.GroupInternalKey != nil
 	groupTapscriptRootSize := len(req.Asset.GroupTapscriptRoot)
-
-	// A group tapscript root must be 32 bytes.
-	if groupTapscriptRootSize != 0 &&
-		groupTapscriptRootSize != sha256.Size {
-
-		return nil, fmt.Errorf("group tapscript root must be %d bytes",
-			sha256.Size)
-	}
-
-	switch {
-	// New grouped asset and grouped asset cannot both be set.
-	case req.Asset.NewGroupedAsset && req.Asset.GroupedAsset:
-		return nil, fmt.Errorf("cannot set both new grouped asset " +
-			"and grouped asset",
-		)
-
-	// Using a specific group key or anchor implies disabling emission.
-	case req.Asset.NewGroupedAsset:
-		if specificGroupKey || specificGroupAnchor {
-			return nil, fmt.Errorf("must not create new grouped " +
-				"asset to specify an existing group")
-		}
-
-	// A group tapscript root cannot be specified if emission is disabled.
-	case !req.Asset.NewGroupedAsset && groupTapscriptRootSize != 0:
-		return nil, fmt.Errorf("cannot specify a group tapscript root" +
-			"when not creating a new grouped asset")
-
-	// A group internal key cannot be specified if emission is disabled.
-	case !req.Asset.NewGroupedAsset && specificGroupInternalKey:
-		return nil, fmt.Errorf("cannot specify a group internal key" +
-			"when not creating a new grouped asset")
-
-	// If the asset is intended to be part of an existing group, a group key
-	// or anchor must be specified, but not both. Neither a group tapscript
-	// root nor group internal key can be specified.
-	case req.Asset.GroupedAsset:
-		if !specificGroupKey && !specificGroupAnchor {
-			return nil, fmt.Errorf("must specify a group key or" +
-				"group anchor")
-		}
-
-		if specificGroupKey && specificGroupAnchor {
-			return nil, fmt.Errorf("cannot specify both a group " +
-				"key and a group anchor")
-		}
-
-		if groupTapscriptRootSize != 0 {
-			return nil, fmt.Errorf("cannot specify a group " +
-				"tapscript root when not creating a new " +
-				"grouped asset")
-		}
-
-		if specificGroupInternalKey {
-			return nil, fmt.Errorf("cannot specify a group " +
-				"internal key when not creating a new " +
-				"grouped asset")
-		}
-
-	// A group was specified without GroupedAsset being set.
-	case specificGroupKey || specificGroupAnchor:
-		return nil, fmt.Errorf("must set grouped asset to mint into " +
-			"a specific group")
-	}
 
 	assetVersion, err := rpcutils.UnmarshalAssetVersion(
 		req.Asset.AssetVersion,
@@ -535,14 +473,6 @@ func (r *rpcServer) MintAsset(ctx context.Context,
 
 		req.Asset.AssetMeta = &taprpc.AssetMeta{}
 
-	}
-
-	// Decimal display doesn't really make sense for collectibles.
-	if req.Asset.DecimalDisplay != 0 &&
-		req.Asset.AssetType == taprpc.AssetType_COLLECTIBLE {
-
-		return nil, fmt.Errorf("decimal display is not supported for " +
-			"collectibles")
 	}
 
 	// TODO(ffranr): Move seedling MetaReveal construction into
@@ -624,13 +554,6 @@ func (r *rpcServer) MintAsset(ctx context.Context,
 
 	if groupTapscriptRootSize != 0 {
 		groupTapscriptRoot = bytes.Clone(req.Asset.GroupTapscriptRoot)
-	}
-
-	if req.Asset.ExternalGroupKey != nil &&
-		req.Asset.GroupInternalKey != nil {
-
-		return nil, fmt.Errorf("cannot set both external group key " +
-			"and group internal key descriptor")
 	}
 
 	seedling := &tapgarden.Seedling{
