@@ -1,8 +1,15 @@
 package taprootassets
 
 import (
+	"errors"
+
 	unirpc "github.com/lightninglabs/taproot-assets/taprpc/universerpc"
 	"github.com/lightninglabs/taproot-assets/universe"
+)
+
+var (
+	// ErrNilRequest is returned when a nil request is passed to a validator.
+	ErrNilRequest = errors.New("nil request")
 )
 
 // ParsedAssetProof contains validated, parsed proof request data.
@@ -22,6 +29,10 @@ type ParsedAssetProof struct {
 // asset leaf from the RPC request, and validates proof type consistency.
 func ValidateAssetProofRequest(req *unirpc.AssetProof) (
 	*ParsedAssetProof, error) {
+
+	if req == nil {
+		return nil, ErrNilRequest
+	}
 
 	universeID, leafKey, err := UnmarshalUniverseKey(req.Key)
 	if err != nil {
@@ -67,6 +78,10 @@ type ParsedSyncRequest struct {
 
 // ParseSyncRequest validates and parses a universe sync request.
 func ParseSyncRequest(req *unirpc.SyncRequest) (*ParsedSyncRequest, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+
 	syncMode, err := UnmarshalUniverseSyncType(req.SyncMode)
 	if err != nil {
 		return nil, err

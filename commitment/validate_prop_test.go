@@ -40,15 +40,27 @@ func TestValidateAssetCommitmentInputs_SameGenesis(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		genesis := asset.GenesisGen.Draw(t, "genesis")
 
-		// Generate 2-4 assets with same genesis but different keys.
+		// Generate 2-4 assets with same genesis but unique script keys.
 		numAssets := rapid.IntRange(2, 4).Draw(t, "numAssets")
-		assets := make([]*asset.Asset, numAssets)
+		assets := make([]*asset.Asset, 0, numAssets)
+		seenKeys := make(map[[32]byte]struct{})
 
 		for i := 0; i < numAssets; i++ {
 			scriptKey := asset.ScriptKeyGen.Draw(t, "scriptKey")
-			assets[i] = asset.AssetGenWithValues(
-				t, genesis, nil, scriptKey,
-			)
+			a := asset.AssetGenWithValues(t, genesis, nil, scriptKey)
+
+			// Skip if we've already seen this commitment key.
+			key := a.AssetCommitmentKey()
+			if _, ok := seenKeys[key]; ok {
+				continue
+			}
+			seenKeys[key] = struct{}{}
+			assets = append(assets, a)
+		}
+
+		// Need at least one asset.
+		if len(assets) == 0 {
+			return
 		}
 
 		err := ValidateAssetCommitmentInputs(assets)

@@ -259,6 +259,24 @@ func TestLeafKeyRoundTrip(t *testing.T) {
 	})
 }
 
+// TestValidateAssetProofRequest_NilRequest tests that ValidateAssetProofRequest
+// returns an error for nil input.
+func TestValidateAssetProofRequest_NilRequest(t *testing.T) {
+	t.Parallel()
+
+	_, err := ValidateAssetProofRequest(nil)
+	require.ErrorIs(t, err, ErrNilRequest)
+}
+
+// TestParseSyncRequest_NilRequest tests that ParseSyncRequest returns an error
+// for nil input.
+func TestParseSyncRequest_NilRequest(t *testing.T) {
+	t.Parallel()
+
+	_, err := ParseSyncRequest(nil)
+	require.ErrorIs(t, err, ErrNilRequest)
+}
+
 // TestParseSyncRequest tests that ParseSyncRequest correctly parses valid
 // sync requests.
 func TestParseSyncRequest(t *testing.T) {
@@ -294,15 +312,10 @@ func TestParseSyncRequest(t *testing.T) {
 	})
 }
 
-// TestValidateAssetProofRequest_InfersProofType tests that
-// ValidateAssetProofRequest correctly infers the proof type when unspecified.
-func TestValidateAssetProofRequest_InfersProofType(t *testing.T) {
+// TestUnmarshalUniverseKey_RoundTrip tests that UnmarshalUniverseKey correctly
+// parses a well-formed universe key.
+func TestUnmarshalUniverseKey_RoundTrip(t *testing.T) {
 	t.Parallel()
-
-	// This test verifies that when ProofType is unspecified, the validator
-	// infers it from the asset. We test the simpler case where proof type
-	// is specified, as generating valid assets with proper issuance/transfer
-	// characteristics requires more complex setup.
 
 	rapid.Check(t, func(t *rapid.T) {
 		// Generate a universe identifier with a specified proof type.
