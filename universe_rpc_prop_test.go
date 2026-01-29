@@ -354,3 +354,128 @@ func TestUnmarshalUniverseKey_RoundTrip(t *testing.T) {
 		require.NotNil(t, parsedKey.LeafScriptKey())
 	})
 }
+
+// TestUnmarshalUniID_RejectsInvalidGroupKeySize tests that group keys with
+// wrong sizes are rejected. parseUserKey accepts 32 bytes (schnorr x-only)
+// or 33 bytes (compressed pubkey).
+func TestUnmarshalUniID_RejectsInvalidGroupKeySize(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(t *rapid.T) {
+		// Invalid group key sizes (valid: 32 schnorr, 33 compressed).
+		invalidSize := rapid.SampledFrom(
+			[]int{0, 1, 31, 34, 64, 100},
+		).Draw(t, "size")
+		invalidKey := rapid.SliceOfN(
+			rapid.Byte(), invalidSize, invalidSize,
+		).Draw(t, "key")
+
+		rpcID := &unirpc.ID{
+			Id: &unirpc.ID_GroupKey{GroupKey: invalidKey},
+		}
+		_, err := UnmarshalUniID(rpcID)
+		require.Error(t, err, "should reject %d-byte group key", invalidSize)
+	})
+}
+
+// TestUnmarshalLeafKey_RejectsInvalidScriptKeySize tests that script keys
+// with wrong sizes are rejected. parseUserKey accepts 32 bytes (schnorr)
+// or 33 bytes (compressed pubkey).
+func TestUnmarshalLeafKey_RejectsInvalidScriptKeySize(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(t *rapid.T) {
+		// Invalid script key sizes (valid: 32 schnorr, 33 compressed).
+		invalidSize := rapid.SampledFrom(
+			[]int{0, 1, 31, 34, 64},
+		).Draw(t, "size")
+		invalidKey := rapid.SliceOfN(
+			rapid.Byte(), invalidSize, invalidSize,
+		).Draw(t, "key")
+
+		// Generate valid outpoint for the test.
+		var txid [32]byte
+		copy(txid[:], rapid.SliceOfN(rapid.Byte(), 32, 32).Draw(t, "txid"))
+
+		rpcKey := &unirpc.AssetKey{
+			Outpoint: &unirpc.AssetKey_Op{
+				Op: &unirpc.Outpoint{
+					HashStr: hex.EncodeToString(txid[:]),
+					Index:   0,
+				},
+			},
+			ScriptKey: &unirpc.AssetKey_ScriptKeyBytes{
+				ScriptKeyBytes: invalidKey,
+			},
+		}
+		_, err := UnmarshalLeafKey(rpcKey)
+		require.Error(t, err, "should reject %d-byte script key", invalidSize)
+	})
+}
+
+// TestUnmarshalUniProofType_RejectsInvalidEnums tests that invalid proof type
+// enum values are rejected. Valid values: 0=UNSPECIFIED, 1=ISSUANCE,
+// 2=TRANSFER.
+func TestUnmarshalUniProofType_RejectsInvalidEnums(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(t *rapid.T) {
+		// Invalid proof type values (valid: 0, 1, 2).
+		invalidType := rapid.SampledFrom(
+			[]int{3, 10, 100, 255},
+		).Draw(t, "type")
+
+		_, err := UnmarshalUniProofType(unirpc.ProofType(invalidType))
+		require.Error(t, err, "should reject proof type %d", invalidType)
+	})
+}
+
+// TestUnmarshalUniverseSyncType_RejectsInvalidEnums tests that invalid sync
+// mode enum values are rejected.
+func TestUnmarshalUniverseSyncType_RejectsInvalidEnums(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(t *rapid.T) {
+		// Invalid sync mode values (valid: 0=full, 1=issuance_only).
+		invalidMode := rapid.IntRange(10, 255).Draw(t, "mode")
+
+		_, err := UnmarshalUniverseSyncType(
+			unirpc.UniverseSyncMode(invalidMode),
+		)
+		require.Error(t, err, "should reject sync mode %d", invalidMode)
+	})
+}
+
+// TestValidateAssetProofRequest_MissingFields tests that requests with
+// missing required fields are rejected.
+func TestValidateAssetProofRequest_MissingFields(t *testing.T) {
+	t.Parallel()
+
+	// Nil request.
+	_, err := ValidateAssetProofRequest(nil)
+	require.ErrorIs(t, err, ErrNilRequest)
+
+	// Missing Key.
+	_, err = ValidateAssetProofRequest(&unirpc.AssetProof{
+		Key:       nil,
+		AssetLeaf: &unirpc.AssetLeaf{},
+	})
+	require.Error(t, err)
+
+	// Missing AssetLeaf.
+	_, err = ValidateAssetProofRequest(&unirpc.AssetProof{
+		Key:       &unirpc.UniverseKey{},
+		AssetLeaf: nil,
+	})
+	require.Error(t, err)
+}
+
+// TestParseSyncRequest_MissingFields tests that requests with missing
+// required fields are rejected.
+func TestParseSyncRequest_MissingFields(t *testing.T) {
+	t.Parallel()
+
+	// Nil request.
+	_, err := ParseSyncRequest(nil)
+	require.ErrorIs(t, err, ErrNilRequest)
+}
