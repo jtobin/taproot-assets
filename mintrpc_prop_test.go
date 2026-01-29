@@ -164,6 +164,7 @@ func TestValidateMintAssetRequest_RejectsInvalidTapscriptRootSize(t *testing.T) 
 		req := &mintrpc.MintAssetRequest{
 			Asset: &mintrpc.MintAsset{
 				Name:               "test-asset",
+				NewGroupedAsset:    true,
 				GroupTapscriptRoot: root,
 			},
 		}
@@ -173,8 +174,86 @@ func TestValidateMintAssetRequest_RejectsInvalidTapscriptRootSize(t *testing.T) 
 	})
 }
 
+// TestValidateMintAssetRequest_RejectsTapscriptRootWithoutNewGrouped tests
+// that tapscript root requires NewGroupedAsset flag.
+func TestValidateMintAssetRequest_RejectsTapscriptRootWithoutNewGrouped(t *testing.T) {
+	t.Parallel()
+
+	req := &mintrpc.MintAssetRequest{
+		Asset: &mintrpc.MintAsset{
+			Name:               "test-asset",
+			GroupTapscriptRoot: make([]byte, 32),
+		},
+	}
+	err := ValidateMintAssetRequest(req)
+	require.ErrorIs(t, err, ErrInvalidGroupConfig)
+}
+
+// TestValidateMintAssetRequest_RejectsGroupInternalKeyWithoutNewGrouped tests
+// that group internal key requires NewGroupedAsset flag.
+func TestValidateMintAssetRequest_RejectsGroupInternalKeyWithoutNewGrouped(t *testing.T) {
+	t.Parallel()
+
+	req := &mintrpc.MintAssetRequest{
+		Asset: &mintrpc.MintAsset{
+			Name:             "test-asset",
+			GroupInternalKey: &taprpc.KeyDescriptor{},
+		},
+	}
+	err := ValidateMintAssetRequest(req)
+	require.ErrorIs(t, err, ErrInvalidGroupConfig)
+}
+
+// TestValidateMintAssetRequest_RejectsGroupKeyWithoutGroupedFlag tests that
+// group_key requires GroupedAsset flag.
+func TestValidateMintAssetRequest_RejectsGroupKeyWithoutGroupedFlag(t *testing.T) {
+	t.Parallel()
+
+	req := &mintrpc.MintAssetRequest{
+		Asset: &mintrpc.MintAsset{
+			Name:     "test-asset",
+			GroupKey: make([]byte, 33),
+		},
+	}
+	err := ValidateMintAssetRequest(req)
+	require.ErrorIs(t, err, ErrInvalidGroupConfig)
+}
+
+// TestValidateMintAssetRequest_RejectsGroupAnchorWithoutGroupedFlag tests that
+// group_anchor requires GroupedAsset flag.
+func TestValidateMintAssetRequest_RejectsGroupAnchorWithoutGroupedFlag(t *testing.T) {
+	t.Parallel()
+
+	req := &mintrpc.MintAssetRequest{
+		Asset: &mintrpc.MintAsset{
+			Name:        "test-asset",
+			GroupAnchor: "anchor",
+		},
+	}
+	err := ValidateMintAssetRequest(req)
+	require.ErrorIs(t, err, ErrInvalidGroupConfig)
+}
+
+// TestValidateMintAssetRequest_RejectsBothExternalAndInternalKey tests that
+// external_group_key and group_internal_key are mutually exclusive.
+func TestValidateMintAssetRequest_RejectsBothExternalAndInternalKey(t *testing.T) {
+	t.Parallel()
+
+	req := &mintrpc.MintAssetRequest{
+		Asset: &mintrpc.MintAsset{
+			Name:             "test-asset",
+			NewGroupedAsset:  true,
+			ExternalGroupKey: &taprpc.ExternalKey{},
+			GroupInternalKey: &taprpc.KeyDescriptor{},
+		},
+	}
+	err := ValidateMintAssetRequest(req)
+	require.ErrorIs(t, err, ErrInvalidGroupConfig)
+}
+
 // TestValidateMintAssetRequest_AcceptsValidTapscriptRoot tests that tapscript
-// roots with valid sizes (0 or 32 bytes) are accepted.
+// roots with valid sizes (0 or 32 bytes) are accepted when NewGroupedAsset is
+// set.
 func TestValidateMintAssetRequest_AcceptsValidTapscriptRoot(t *testing.T) {
 	t.Parallel()
 
@@ -182,6 +261,7 @@ func TestValidateMintAssetRequest_AcceptsValidTapscriptRoot(t *testing.T) {
 	req := &mintrpc.MintAssetRequest{
 		Asset: &mintrpc.MintAsset{
 			Name:               "test-asset",
+			NewGroupedAsset:    true,
 			GroupTapscriptRoot: nil,
 		},
 	}

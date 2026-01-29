@@ -66,6 +66,12 @@ func ValidateMintAssetRequest(req *mintrpc.MintAssetRequest) error {
 func validateGroupConfig(req *mintrpc.MintAssetRequest) error {
 	a := req.Asset
 
+	hasGroupKey := len(a.GroupKey) > 0
+	hasGroupAnchor := a.GroupAnchor != ""
+	hasGroupInternalKey := a.GroupInternalKey != nil
+	hasExternalGroupKey := a.ExternalGroupKey != nil
+	hasTapscriptRoot := len(a.GroupTapscriptRoot) > 0
+
 	// Cannot set both NewGroupedAsset and GroupedAsset.
 	if a.NewGroupedAsset && a.GroupedAsset {
 		return fmt.Errorf("%w: cannot set both new_grouped_asset and "+
@@ -74,25 +80,47 @@ func validateGroupConfig(req *mintrpc.MintAssetRequest) error {
 
 	// NewGroupedAsset cannot have group key or anchor.
 	if a.NewGroupedAsset {
-		if len(a.GroupKey) > 0 || a.GroupAnchor != "" {
+		if hasGroupKey || hasGroupAnchor {
 			return fmt.Errorf("%w: new_grouped_asset cannot specify "+
 				"group_key or group_anchor", ErrInvalidGroupConfig)
 		}
 	}
 
+	// Tapscript root and group internal key only allowed with
+	// NewGroupedAsset.
+	if !a.NewGroupedAsset {
+		if hasTapscriptRoot {
+			return fmt.Errorf("%w: group_tapscript_root requires "+
+				"new_grouped_asset", ErrInvalidGroupConfig)
+		}
+		if hasGroupInternalKey {
+			return fmt.Errorf("%w: group_internal_key requires "+
+				"new_grouped_asset", ErrInvalidGroupConfig)
+		}
+	}
+
+	// Group key/anchor require GroupedAsset flag.
+	if !a.GroupedAsset && (hasGroupKey || hasGroupAnchor) {
+		return fmt.Errorf("%w: group_key or group_anchor requires "+
+			"grouped_asset flag", ErrInvalidGroupConfig)
+	}
+
 	// GroupedAsset requires exactly one of group_key or group_anchor.
 	if a.GroupedAsset {
-		hasKey := len(a.GroupKey) > 0
-		hasAnchor := a.GroupAnchor != ""
-
-		if !hasKey && !hasAnchor {
+		if !hasGroupKey && !hasGroupAnchor {
 			return fmt.Errorf("%w: grouped_asset requires "+
 				"group_key or group_anchor", ErrInvalidGroupConfig)
 		}
-		if hasKey && hasAnchor {
+		if hasGroupKey && hasGroupAnchor {
 			return fmt.Errorf("%w: grouped_asset cannot specify both "+
 				"group_key and group_anchor", ErrInvalidGroupConfig)
 		}
+	}
+
+	// ExternalGroupKey and GroupInternalKey are mutually exclusive.
+	if hasExternalGroupKey && hasGroupInternalKey {
+		return fmt.Errorf("%w: cannot set both external_group_key and "+
+			"group_internal_key", ErrInvalidGroupConfig)
 	}
 
 	return nil
