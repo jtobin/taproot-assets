@@ -42,12 +42,12 @@ func NewRpcUniverseRegistrar(
 func unmarshalIssuanceProof(uniKey *unirpc.UniverseKey,
 	proofResp *unirpc.AssetProofResponse) (*universe.Proof, error) {
 
-	leafKey, err := unmarshalLeafKey(uniKey.LeafKey)
+	leafKey, err := UnmarshalLeafKey(uniKey.LeafKey)
 	if err != nil {
 		return nil, err
 	}
 
-	assetLeaf, err := unmarshalAssetLeaf(proofResp.AssetLeaf)
+	assetLeaf, err := UnmarshalAssetLeaf(proofResp.AssetLeaf)
 	if err != nil {
 		return nil, err
 	}

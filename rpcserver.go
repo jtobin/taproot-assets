@@ -6758,8 +6758,8 @@ func (r *rpcServer) AssetLeaves(ctx context.Context,
 	return resp, nil
 }
 
-// unmarshalLeafKey un-marshals a leaf key from the RPC form.
-func unmarshalLeafKey(key *unirpc.AssetKey) (universe.LeafKey, error) {
+// UnmarshalLeafKey un-marshals a leaf key from the RPC form.
+func UnmarshalLeafKey(key *unirpc.AssetKey) (universe.LeafKey, error) {
 	var leafKey universe.BaseLeafKey
 
 	switch {
@@ -6952,7 +6952,7 @@ func (r *rpcServer) marshalUniverseProofLeaf(ctx context.Context,
 func (r *rpcServer) QueryProof(ctx context.Context,
 	req *unirpc.UniverseKey) (*unirpc.AssetProofResponse, error) {
 
-	universeID, leafKey, err := unmarshalUniverseKey(req)
+	universeID, leafKey, err := UnmarshalUniverseKey(req)
 	if err != nil {
 		return nil, err
 	}
@@ -7060,8 +7060,8 @@ func (r *rpcServer) queryProof(ctx context.Context, uniID universe.Identifier,
 	return firstProof, nil
 }
 
-// unmarshalUniverseKey unmarshals a universe key from the RPC form.
-func unmarshalUniverseKey(key *unirpc.UniverseKey) (universe.Identifier,
+// UnmarshalUniverseKey unmarshals a universe key from the RPC form.
+func UnmarshalUniverseKey(key *unirpc.UniverseKey) (universe.Identifier,
 	universe.LeafKey, error) {
 
 	var (
@@ -7079,7 +7079,7 @@ func unmarshalUniverseKey(key *unirpc.UniverseKey) (universe.Identifier,
 		return uniID, uniKey, err
 	}
 
-	leafKey, err := unmarshalLeafKey(key.LeafKey)
+	leafKey, err := UnmarshalLeafKey(key.LeafKey)
 	if err != nil {
 		return uniID, uniKey, err
 	}
@@ -7173,8 +7173,8 @@ func unmarshalCommitLocator(outpoint, spentOutpoint *taprpc.OutPoint,
 	}
 }
 
-// unmarshalAssetLeaf unmarshals an asset leaf from the RPC form.
-func unmarshalAssetLeaf(leaf *unirpc.AssetLeaf) (*universe.Leaf, error) {
+// UnmarshalAssetLeaf unmarshals an asset leaf from the RPC form.
+func UnmarshalAssetLeaf(leaf *unirpc.AssetLeaf) (*universe.Leaf, error) {
 	// We'll just pull the asset details from the serialized issuance proof
 	// itself.
 	var proofAsset asset.Asset
@@ -7205,12 +7205,12 @@ func unmarshalAssetLeaf(leaf *unirpc.AssetLeaf) (*universe.Leaf, error) {
 func (r *rpcServer) InsertProof(ctx context.Context,
 	req *unirpc.AssetProof) (*unirpc.AssetProofResponse, error) {
 
-	universeID, leafKey, err := unmarshalUniverseKey(req.Key)
+	universeID, leafKey, err := UnmarshalUniverseKey(req.Key)
 	if err != nil {
 		return nil, err
 	}
 
-	assetLeaf, err := unmarshalAssetLeaf(req.AssetLeaf)
+	assetLeaf, err := UnmarshalAssetLeaf(req.AssetLeaf)
 	if err != nil {
 		return nil, err
 	}
@@ -7290,7 +7290,7 @@ func (r *rpcServer) PushProof(ctx context.Context,
 	}
 
 	remoteUniAddr := unmarshalUniverseServer(req.Server)
-	universeID, leafKey, err := unmarshalUniverseKey(req.Key)
+	universeID, leafKey, err := UnmarshalUniverseKey(req.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -7349,9 +7349,9 @@ func (r *rpcServer) Info(ctx context.Context,
 	}, nil
 }
 
-// unmarshalUniverseSyncType maps an RPC universe sync type into a concrete
+// UnmarshalUniverseSyncType maps an RPC universe sync type into a concrete
 // type.
-func unmarshalUniverseSyncType(
+func UnmarshalUniverseSyncType(
 	req unirpc.UniverseSyncMode) (universe.SyncType, error) {
 
 	switch req {
@@ -7366,8 +7366,8 @@ func unmarshalUniverseSyncType(
 	}
 }
 
-// unmarshalSyncTargets maps an RPC sync target into a concrete type.
-func unmarshalSyncTargets(
+// UnmarshalSyncTargets maps an RPC sync target into a concrete type.
+func UnmarshalSyncTargets(
 	targets []*unirpc.SyncTarget) ([]universe.Identifier, error) {
 
 	uniIDs := make([]universe.Identifier, 0, len(targets))
@@ -7446,11 +7446,11 @@ func (r *rpcServer) SyncUniverse(ctx context.Context,
 	// TODO(roasbeef): have another layer, only allow single outstanding
 	// sync request per host?
 
-	syncMode, err := unmarshalUniverseSyncType(req.SyncMode)
+	syncMode, err := UnmarshalUniverseSyncType(req.SyncMode)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse sync type: %w", err)
 	}
-	syncTargets, err := unmarshalSyncTargets(req.SyncTargets)
+	syncTargets, err := UnmarshalSyncTargets(req.SyncTargets)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse sync targets: %w", err)
 	}

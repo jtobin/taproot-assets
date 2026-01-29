@@ -159,7 +159,7 @@ func (r *RpcUniverseDiff) UniverseLeafKeys(ctx context.Context,
 
 	keys := make([]universe.LeafKey, len(assetKeys.AssetKeys))
 	for i, key := range assetKeys.AssetKeys {
-		leafKey, err := unmarshalLeafKey(key)
+		leafKey, err := UnmarshalLeafKey(key)
 		if err != nil {
 			return nil, err
 		}
@@ -198,7 +198,7 @@ func (r *RpcUniverseDiff) FetchProofLeaf(ctx context.Context,
 		return nil, err
 	}
 
-	assetLeaf, err := unmarshalAssetLeaf(uProofs.AssetLeaf)
+	assetLeaf, err := UnmarshalAssetLeaf(uProofs.AssetLeaf)
 	if err != nil {
 		return nil, err
 	}
