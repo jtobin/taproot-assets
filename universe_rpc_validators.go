@@ -34,6 +34,10 @@ func ValidateAssetProofRequest(req *unirpc.AssetProof) (
 		return nil, ErrNilRequest
 	}
 
+	if req.AssetLeaf == nil {
+		return nil, errors.New("asset leaf cannot be nil")
+	}
+
 	universeID, leafKey, err := UnmarshalUniverseKey(req.Key)
 	if err != nil {
 		return nil, err
