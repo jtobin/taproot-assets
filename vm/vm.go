@@ -108,9 +108,9 @@ func New(newAsset *asset.Asset, splitAssets []*commitment.SplitAsset,
 	}, nil
 }
 
-// matchesPrevGenesis determines whether certain key parameters of the new
+// MatchesPrevGenesis determines whether certain key parameters of the new
 // asset continue to hold its previous genesis.
-func matchesPrevGenesis(prevID asset.ID, groupKey *asset.GroupKey,
+func MatchesPrevGenesis(prevID asset.ID, groupKey *asset.GroupKey,
 	tag string, prevAsset *asset.Asset) bool {
 
 	switch {
@@ -143,9 +143,9 @@ func matchesPrevGenesis(prevID asset.ID, groupKey *asset.GroupKey,
 	}
 }
 
-// matchesAssetParams ensures that a new asset continues to adhere to the
+// MatchesAssetParams ensures that a new asset continues to adhere to the
 // static parameters of its predecessor.
-func matchesAssetParams(newAsset, prevAsset *asset.Asset,
+func MatchesAssetParams(newAsset, prevAsset *asset.Asset,
 	prevAssetWitness *asset.Witness) error {
 
 	scriptKey := asset.ToSerialized(prevAsset.ScriptKey.PubKey)
@@ -153,7 +153,7 @@ func matchesAssetParams(newAsset, prevAsset *asset.Asset,
 		return newErrKind(ErrScriptKeyMismatch)
 	}
 
-	if !matchesPrevGenesis(
+	if !MatchesPrevGenesis(
 		prevAssetWitness.PrevID.ID, newAsset.GroupKey,
 		newAsset.Genesis.Tag, prevAsset,
 	) {
@@ -271,7 +271,7 @@ func (vm *Engine) validateSplit(splitAsset *commitment.SplitAsset) error {
 			spew.Sdump(rootWitness.PrevID),
 			len(vm.prevAssets))
 	}
-	err := matchesAssetParams(
+	err := MatchesAssetParams(
 		&splitAsset.Asset, prevAsset, &rootWitness,
 	)
 	if err != nil {
@@ -359,7 +359,7 @@ func (vm *Engine) validateWitnessV0(virtualTx *wire.MsgTx, inputIdx uint32,
 		}
 
 		// The parameters of the new and old asset much match exactly.
-		err = matchesAssetParams(vm.newAsset, prevAsset, witness)
+		err = MatchesAssetParams(vm.newAsset, prevAsset, witness)
 		if err != nil {
 			return err
 		}
