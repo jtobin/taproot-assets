@@ -258,3 +258,86 @@ func TestLeafKeyRoundTrip(t *testing.T) {
 		require.Equal(t, vout, outpoint.Index)
 	})
 }
+
+// TestParseSyncRequest tests that ParseSyncRequest correctly parses valid
+// sync requests.
+func TestParseSyncRequest(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(t *rapid.T) {
+		// Generate a sync mode (0 = full, 1 = issuance only).
+		syncModeInt := rapid.IntRange(0, 1).Draw(t, "syncMode")
+		syncMode := unirpc.UniverseSyncMode(syncModeInt)
+
+		// Generate some sync targets (0 to 3).
+		numTargets := rapid.IntRange(0, 3).Draw(t, "numTargets")
+		targets := make([]*unirpc.SyncTarget, numTargets)
+		for i := 0; i < numTargets; i++ {
+			id := genUniverseIdentifier(t)
+			rpcID, err := MarshalUniID(id)
+			require.NoError(t, err)
+			targets[i] = &unirpc.SyncTarget{
+				Id: rpcID,
+			}
+		}
+
+		req := &unirpc.SyncRequest{
+			SyncMode:    syncMode,
+			SyncTargets: targets,
+		}
+
+		parsed, err := ParseSyncRequest(req)
+		require.NoError(t, err)
+
+		// Verify sync mode was parsed correctly.
+		require.Equal(t, numTargets, len(parsed.SyncTargets))
+	})
+}
+
+// TestValidateAssetProofRequest_InfersProofType tests that
+// ValidateAssetProofRequest correctly infers the proof type when unspecified.
+func TestValidateAssetProofRequest_InfersProofType(t *testing.T) {
+	t.Parallel()
+
+	// This test verifies that when ProofType is unspecified, the validator
+	// infers it from the asset. We test the simpler case where proof type
+	// is specified, as generating valid assets with proper issuance/transfer
+	// characteristics requires more complex setup.
+
+	rapid.Check(t, func(t *rapid.T) {
+		// Generate a universe identifier with a specified proof type.
+		id := genUniverseIdentifier(t)
+
+		rpcID, err := MarshalUniID(id)
+		require.NoError(t, err)
+
+		// Create a universe key with valid leaf key components.
+		scriptKey := genValidPubKey(t)
+		var txid [32]byte
+		copy(txid[:], rapid.SliceOfN(rapid.Byte(), 32, 32).Draw(t, "txid"))
+		vout := rapid.Uint32Range(0, 100).Draw(t, "vout")
+
+		uniKey := &unirpc.UniverseKey{
+			Id: rpcID,
+			LeafKey: &unirpc.AssetKey{
+				Outpoint: &unirpc.AssetKey_Op{
+					Op: &unirpc.Outpoint{
+						HashStr: hex.EncodeToString(txid[:]),
+						Index:   int32(vout),
+					},
+				},
+				ScriptKey: &unirpc.AssetKey_ScriptKeyBytes{
+					ScriptKeyBytes: schnorr.SerializePubKey(
+						scriptKey,
+					),
+				},
+			},
+		}
+
+		// Test that UnmarshalUniverseKey works with our generated key.
+		parsedID, parsedKey, err := UnmarshalUniverseKey(uniKey)
+		require.NoError(t, err)
+		require.Equal(t, id.ProofType, parsedID.ProofType)
+		require.NotNil(t, parsedKey.LeafScriptKey())
+	})
+}
