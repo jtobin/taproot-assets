@@ -179,11 +179,11 @@ func testUniverseSync(t *harnessTest) {
 	require.NoError(t.t, err)
 
 	// Verify the multiverse inclusion proof for the first asset.
-	firstAssetUniMssmtRoot := unmarshalMerkleSumNode(
+	firstAssetUniMssmtRoot := tap.UnmarshalMerkleSumNode(
 		firstAssetUniProof.UniverseRoot.MssmtRoot,
 	)
 
-	multiverseRoot := unmarshalMerkleSumNode(
+	multiverseRoot := tap.UnmarshalMerkleSumNode(
 		firstAssetUniProof.MultiverseRoot,
 	)
 
@@ -372,13 +372,6 @@ func testUniverseManualSync(t *harnessTest) {
 	require.NoError(t.t, err)
 }
 
-// unmarshalMerkleSumNode un-marshals a protobuf MerkleSumNode.
-func unmarshalMerkleSumNode(root *unirpc.MerkleSumNode) mssmt.Node {
-	var nodeHash mssmt.NodeHash
-	copy(nodeHash[:], root.RootHash)
-
-	return mssmt.NewComputedBranch(nodeHash, uint64(root.RootSum))
-}
 
 // testUniverseREST tests that we're able to properly query the universe state
 // via the REST interface.

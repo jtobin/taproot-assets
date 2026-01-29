@@ -36,14 +36,16 @@ func NewRpcUniverseDiff(
 	}, nil
 }
 
-func unmarshalMerkleSumNode(root *unirpc.MerkleSumNode) mssmt.Node {
+// UnmarshalMerkleSumNode unmarshals an RPC MerkleSumNode into an mssmt.Node.
+func UnmarshalMerkleSumNode(root *unirpc.MerkleSumNode) mssmt.Node {
 	var nodeHash mssmt.NodeHash
 	copy(nodeHash[:], root.RootHash)
 
 	return mssmt.NewComputedBranch(nodeHash, uint64(root.RootSum))
 }
 
-func unmarshalUniverseRoot(
+// UnmarshalUniverseRoot unmarshals an RPC UniverseRoot into a universe.Root.
+func UnmarshalUniverseRoot(
 	root *unirpc.UniverseRoot) (universe.Root, error) {
 
 	id, err := UnmarshalUniID(root.Id)
@@ -53,11 +55,12 @@ func unmarshalUniverseRoot(
 
 	return universe.Root{
 		ID:   id,
-		Node: unmarshalMerkleSumNode(root.MssmtRoot),
+		Node: UnmarshalMerkleSumNode(root.MssmtRoot),
 	}, nil
 }
 
-func unmarshalUniverseRoots(
+// UnmarshalUniverseRoots unmarshals RPC UniverseRoots into universe.Roots.
+func UnmarshalUniverseRoots(
 	roots []*unirpc.UniverseRoot) ([]universe.Root, error) {
 
 	uniRoots := make([]universe.Root, 0, len(roots))
@@ -69,7 +72,7 @@ func unmarshalUniverseRoots(
 
 		uniRoots = append(uniRoots, universe.Root{
 			ID:   id,
-			Node: unmarshalMerkleSumNode(root.MssmtRoot),
+			Node: UnmarshalMerkleSumNode(root.MssmtRoot),
 		})
 	}
 
@@ -93,7 +96,7 @@ func (r *RpcUniverseDiff) RootNodes(ctx context.Context,
 		return nil, err
 	}
 
-	return unmarshalUniverseRoots(
+	return UnmarshalUniverseRoots(
 		maps.Values(universeRoots.UniverseRoots),
 	)
 }
@@ -130,10 +133,10 @@ func (r *RpcUniverseDiff) RootNode(ctx context.Context,
 	}
 
 	if id.ProofType == universe.ProofTypeIssuance {
-		return unmarshalUniverseRoot(universeRoot.IssuanceRoot)
+		return UnmarshalUniverseRoot(universeRoot.IssuanceRoot)
 	}
 
-	return unmarshalUniverseRoot(universeRoot.TransferRoot)
+	return UnmarshalUniverseRoot(universeRoot.TransferRoot)
 }
 
 // UniverseLeafKeys returns all the keys inserted in the universe.
@@ -193,7 +196,7 @@ func (r *RpcUniverseDiff) FetchProofLeaf(ctx context.Context,
 		return nil, err
 	}
 
-	uniRoot, err := unmarshalUniverseRoot(uProofs.UniverseRoot)
+	uniRoot, err := UnmarshalUniverseRoot(uProofs.UniverseRoot)
 	if err != nil {
 		return nil, err
 	}

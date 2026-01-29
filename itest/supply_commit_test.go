@@ -386,7 +386,7 @@ func testSupplyCommitIgnoreAsset(t *harnessTest) {
 	)
 
 	ignoreLeafKey := fn.ToArray[[32]byte](respIgnore.LeafKey)
-	ignoreLeaf := unmarshalMerkleSumNode(respIgnore.Leaf)
+	ignoreLeaf := taprootassets.UnmarshalMerkleSumNode(respIgnore.Leaf)
 
 	AssertInclusionProof(
 		t, expectedIgnoreSubtreeRootHash, inclusionProofBytes,
@@ -1462,7 +1462,7 @@ func testFetchSupplyLeaves(t *harnessTest) {
 	inclusionProofs := leavesRespWithProofs.IssuanceLeafInclusionProofs
 	for i, proofBytes := range inclusionProofs {
 		leafKey := fn.ToArray[[32]byte](issuanceLeafKeys[i])
-		leafNode := unmarshalMerkleSumNode(
+		leafNode := taprootassets.UnmarshalMerkleSumNode(
 			leavesRespWithProofs.IssuanceLeaves[i].LeafNode,
 		)
 
@@ -1480,7 +1480,7 @@ func testFetchSupplyLeaves(t *harnessTest) {
 	inclusionProofs = leavesRespWithProofs.BurnLeafInclusionProofs
 	for i, proofBytes := range inclusionProofs {
 		leafKey := fn.ToArray[[32]byte](burnLeafKeys[i])
-		leafNode := unmarshalMerkleSumNode(
+		leafNode := taprootassets.UnmarshalMerkleSumNode(
 			leavesRespWithProofs.BurnLeaves[i].LeafNode,
 		)
 
