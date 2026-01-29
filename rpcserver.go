@@ -446,13 +446,9 @@ func (r *rpcServer) GetInfo(ctx context.Context,
 func (r *rpcServer) MintAsset(ctx context.Context,
 	req *mintrpc.MintAssetRequest) (*mintrpc.MintAssetResponse, error) {
 
-	if req.Asset == nil {
-		return nil, fmt.Errorf("asset cannot be nil")
-	}
-
-	err := asset.ValidateAssetName(req.Asset.Name)
-	if err != nil {
-		return nil, fmt.Errorf("invalid asset name: %w", err)
+	// Use consolidated validator for upfront validation.
+	if err := ValidateMintAssetRequest(req); err != nil {
+		return nil, err
 	}
 
 	specificGroupKey := len(req.Asset.GroupKey) != 0
@@ -7205,33 +7201,15 @@ func UnmarshalAssetLeaf(leaf *unirpc.AssetLeaf) (*universe.Leaf, error) {
 func (r *rpcServer) InsertProof(ctx context.Context,
 	req *unirpc.AssetProof) (*unirpc.AssetProofResponse, error) {
 
-	universeID, leafKey, err := UnmarshalUniverseKey(req.Key)
+	// Use consolidated validator for upfront validation.
+	parsed, err := ValidateAssetProofRequest(req)
 	if err != nil {
 		return nil, err
 	}
 
-	assetLeaf, err := UnmarshalAssetLeaf(req.AssetLeaf)
-	if err != nil {
-		return nil, err
-	}
-
-	// If universe proof type unspecified, set based on the provided asset
-	// proof.
-	if universeID.ProofType == universe.ProofTypeUnspecified {
-		universeID.ProofType, err = universe.NewProofTypeFromAsset(
-			assetLeaf.Asset,
-		)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Ensure that the new proof is of the correct type for the target
-	// universe.
-	err = universe.ValidateProofUniverseType(assetLeaf.Asset, universeID)
-	if err != nil {
-		return nil, err
-	}
+	universeID := parsed.UniverseID
+	leafKey := parsed.LeafKey
+	assetLeaf := parsed.AssetLeaf
 
 	// Ensure proof insert is enabled for the given universe.
 	syncConfigs, err := r.cfg.UniverseFederation.QuerySyncConfigs(ctx)
@@ -7446,14 +7424,14 @@ func (r *rpcServer) SyncUniverse(ctx context.Context,
 	// TODO(roasbeef): have another layer, only allow single outstanding
 	// sync request per host?
 
-	syncMode, err := UnmarshalUniverseSyncType(req.SyncMode)
+	// Use consolidated validator for upfront validation.
+	parsed, err := ParseSyncRequest(req)
 	if err != nil {
-		return nil, fmt.Errorf("unable to parse sync type: %w", err)
+		return nil, fmt.Errorf("invalid sync request: %w", err)
 	}
-	syncTargets, err := UnmarshalSyncTargets(req.SyncTargets)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse sync targets: %w", err)
-	}
+
+	syncMode := parsed.SyncMode
+	syncTargets := parsed.SyncTargets
 
 	uniAddr := universe.NewServerAddrFromStr(req.UniverseHost)
 
