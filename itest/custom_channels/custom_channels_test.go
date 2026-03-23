@@ -96,6 +96,10 @@ var testCases = []*ccTestCase{
 		test: testCustomChannelsOraclePricing,
 	},
 	{
+		name: "limit constraints",
+		test: testCustomChannelsLimitConstraints,
+	},
+	{
 		name: "fee",
 		test: testCustomChannelsFee,
 	},

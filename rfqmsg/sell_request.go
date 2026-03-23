@@ -97,7 +97,7 @@ func NewSellRequest(peer route.Vertex, assetSpecifier asset.Specifier,
 			"length of %d bytes", MaxOracleMetadataLength)
 	}
 
-	return &SellRequest{
+	req := &SellRequest{
 		Peer:                peer,
 		Version:             latestSellRequestVersion,
 		ID:                  id,
@@ -107,7 +107,14 @@ func NewSellRequest(peer route.Vertex, assetSpecifier asset.Specifier,
 		AssetRateLimit:      assetRateLimit,
 		AssetRateHint:       assetRateHint,
 		PriceOracleMetadata: oracleMetadata,
-	}, nil
+	}
+
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("unable to validate sell "+
+			"request: %w", err)
+	}
+
+	return req, nil
 }
 
 // NewSellRequestFromWire instantiates a new instance from a wire message.
