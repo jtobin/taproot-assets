@@ -28,6 +28,7 @@ cmd/tapd/tapd
 /itest/custom_channels/*.log.*
 
 /docs/examples/basic-price-oracle/basic-price-oracle
+basic-portfolio-pilot
 
 # Test binary, built with `go test -c`
 *.test
