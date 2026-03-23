@@ -59,6 +59,13 @@ type (
 	// the optional metadata that can be included in a quote request to
 	// provide additional context to the price oracle.
 	requestOracleMetadata = tlv.OptionalRecordT[tlv.TlvType27, []byte]
+
+	// requestAssetRateLimit is a type alias for a record that
+	// represents an optional rate limit constraint on the quote
+	// request.
+	requestAssetRateLimit = tlv.OptionalRecordT[
+		tlv.TlvType29, TlvFixedPoint,
+	]
 )
 
 // requestWireMsgData is a struct that represents the message data field for
@@ -138,6 +145,11 @@ type requestWireMsgData struct {
 	// price oracle can use to give out a more accurate (or discount) asset
 	// rate. The maximum length of this field is 32'768 bytes.
 	PriceOracleMetadata requestOracleMetadata
+
+	// AssetRateLimit is an optional rate limit constraint. For buy
+	// requests this is the minimum acceptable rate; for sell requests
+	// this is the maximum acceptable rate.
+	AssetRateLimit requestAssetRateLimit
 }
 
 // newRequestWireMsgDataFromBuy creates a new requestWireMsgData from a buy
@@ -431,6 +443,11 @@ func (m *requestWireMsgData) Encode(w io.Writer) error {
 			records = append(records, r.Record())
 		},
 	)
+	m.AssetRateLimit.WhenSome(
+		func(r tlv.RecordT[tlv.TlvType29, TlvFixedPoint]) {
+			records = append(records, r.Record())
+		},
+	)
 
 	tlv.SortRecords(records)
 
@@ -459,6 +476,7 @@ func (m *requestWireMsgData) Decode(r io.Reader) error {
 	minOutAsset := m.MinOutAsset.Zero()
 
 	oracleMetadata := m.PriceOracleMetadata.Zero()
+	assetRateLimit := m.AssetRateLimit.Zero()
 
 	// Create a tlv stream with all the fields.
 	tlvStream, err := tlv.NewStream(
@@ -482,6 +500,7 @@ func (m *requestWireMsgData) Decode(r io.Reader) error {
 		minOutAsset.Record(),
 
 		oracleMetadata.Record(),
+		assetRateLimit.Record(),
 	)
 	if err != nil {
 		return err
@@ -523,6 +542,9 @@ func (m *requestWireMsgData) Decode(r io.Reader) error {
 	}
 	if _, ok := tlvMap[oracleMetadata.TlvType()]; ok {
 		m.PriceOracleMetadata = tlv.SomeRecordT(oracleMetadata)
+	}
+	if _, ok := tlvMap[assetRateLimit.TlvType()]; ok {
+		m.AssetRateLimit = tlv.SomeRecordT(assetRateLimit)
 	}
 
 	return nil
