@@ -2,6 +2,8 @@ package rfqmsg
 
 import (
 	"bytes"
+	"fmt"
+	"math/big"
 	"testing"
 	"time"
 
@@ -315,65 +317,202 @@ func TestMinMaxConstraintProperty(t *testing.T) {
 	})
 }
 
-// TestRateBoundEnforcementProperty verifies that rate bound
-// comparison follows the correct direction semantics:
-//   - Buy: accepted >= limit passes, accepted < limit fails.
-//   - Sell: accepted <= limit passes, accepted > limit fails.
+// TestNegativeRateLimitRejected verifies that Validate rejects a
+// rate limit with a non-positive coefficient for both buy and sell
+// requests.
+func TestNegativeRateLimitRejected(t *testing.T) {
+	t.Parallel()
+
+	spec := asset.NewSpecifierFromId(asset.ID{1})
+	negLimit := rfqmath.FixedPoint[rfqmath.BigInt]{
+		Coefficient: rfqmath.NewBigInt(
+			big.NewInt(-5),
+		),
+		Scale: 0,
+	}
+	zeroLimit := rfqmath.FixedPoint[rfqmath.BigInt]{
+		Coefficient: rfqmath.NewBigIntFromUint64(0),
+		Scale:       0,
+	}
+
+	t.Run("buy_negative", func(t *testing.T) {
+		t.Parallel()
+		req := &BuyRequest{
+			Version:        V1,
+			AssetSpecifier: spec,
+			AssetMaxAmt:    100,
+			AssetRateLimit: fn.Some(negLimit),
+			AssetRateHint:  fn.None[AssetRate](),
+		}
+		err := req.Validate()
+		require.ErrorContains(
+			t, err, "coefficient must be positive",
+		)
+	})
+
+	t.Run("buy_zero", func(t *testing.T) {
+		t.Parallel()
+		req := &BuyRequest{
+			Version:        V1,
+			AssetSpecifier: spec,
+			AssetMaxAmt:    100,
+			AssetRateLimit: fn.Some(zeroLimit),
+			AssetRateHint:  fn.None[AssetRate](),
+		}
+		err := req.Validate()
+		require.ErrorContains(
+			t, err, "coefficient must be positive",
+		)
+	})
+
+	t.Run("sell_negative", func(t *testing.T) {
+		t.Parallel()
+		req := &SellRequest{
+			Version:        V1,
+			AssetSpecifier: spec,
+			PaymentMaxAmt:  1000,
+			AssetRateLimit: fn.Some(negLimit),
+			AssetRateHint:  fn.None[AssetRate](),
+		}
+		err := req.Validate()
+		require.ErrorContains(
+			t, err, "coefficient must be positive",
+		)
+	})
+
+	t.Run("sell_zero", func(t *testing.T) {
+		t.Parallel()
+		req := &SellRequest{
+			Version:        V1,
+			AssetSpecifier: spec,
+			PaymentMaxAmt:  1000,
+			AssetRateLimit: fn.Some(zeroLimit),
+			AssetRateHint:  fn.None[AssetRate](),
+		}
+		err := req.Validate()
+		require.ErrorContains(
+			t, err, "coefficient must be positive",
+		)
+	})
+}
+
+// TestRateBoundEnforcementProperty verifies that rate limit fields
+// survive a wire roundtrip and preserve the ordering relationship
+// that checkRateBound relies on. For each request type we draw a
+// random rate limit, encode/decode the request, then confirm that
+// Cmp between an independently drawn accepted rate and the decoded
+// limit yields the same result as comparing against the original.
 func TestRateBoundEnforcementProperty(t *testing.T) {
 	t.Parallel()
 
 	t.Run("buy", func(t *testing.T) {
 		t.Parallel()
 		rapid.Check(t, func(t *rapid.T) {
+			peer := peerGen().Draw(t, "peer")
+			id := assetIDGen().Draw(t, "id")
+			spec := asset.NewSpecifierFromId(id)
+
+			maxAmt := rapid.Uint64Range(1, 1_000_000).
+				Draw(t, "maxAmt")
+			limit := fixedPointGen().Draw(t, "limit")
+
+			req, err := NewBuyRequest(
+				peer, spec, maxAmt,
+				fn.None[uint64](),
+				fn.Some(limit),
+				fn.None[AssetRate](), "",
+			)
+			require.NoError(t, err)
+
+			wireMsg, err := req.ToWire()
+			require.NoError(t, err)
+
+			var msgData requestWireMsgData
+			err = msgData.Decode(
+				bytes.NewReader(wireMsg.Data),
+			)
+			require.NoError(t, err)
+
+			decoded, err := NewBuyRequestFromWire(
+				wireMsg, msgData,
+			)
+			require.NoError(t, err)
+
+			decodedLimit, err := decoded.AssetRateLimit.
+				UnwrapOrErr(
+					errMissingRateLimit,
+				)
+			require.NoError(t, err)
+
+			// Ordering vs an independent rate must
+			// be identical before and after roundtrip.
 			accepted := fixedPointGen().Draw(
 				t, "accepted",
 			)
-			limit := fixedPointGen().Draw(t, "limit")
-			cmp := accepted.Cmp(limit)
-
-			// Buy: accepted must be >= limit.
-			if cmp >= 0 {
-				require.False(
-					t, accepted.Cmp(limit) < 0,
-					"buy pass: accepted=%v limit=%v",
-					accepted, limit,
-				)
-			} else {
-				require.True(
-					t, accepted.Cmp(limit) < 0,
-					"buy fail: accepted=%v limit=%v",
-					accepted, limit,
-				)
-			}
+			require.Equal(
+				t, accepted.Cmp(limit),
+				accepted.Cmp(decodedLimit),
+				"buy Cmp mismatch after roundtrip",
+			)
 		})
 	})
 
 	t.Run("sell", func(t *testing.T) {
 		t.Parallel()
 		rapid.Check(t, func(t *rapid.T) {
+			peer := peerGen().Draw(t, "peer")
+			id := assetIDGen().Draw(t, "id")
+			spec := asset.NewSpecifierFromId(id)
+
+			maxAmt := rapid.Uint64Range(
+				1, 1_000_000,
+			).Draw(t, "maxAmt")
+			limit := fixedPointGen().Draw(t, "limit")
+
+			req, err := NewSellRequest(
+				peer, spec,
+				lnwire.MilliSatoshi(maxAmt),
+				fn.None[lnwire.MilliSatoshi](),
+				fn.Some(limit),
+				fn.None[AssetRate](), "",
+			)
+			require.NoError(t, err)
+
+			wireMsg, err := req.ToWire()
+			require.NoError(t, err)
+
+			var msgData requestWireMsgData
+			err = msgData.Decode(
+				bytes.NewReader(wireMsg.Data),
+			)
+			require.NoError(t, err)
+
+			decoded, err := NewSellRequestFromWire(
+				wireMsg, msgData,
+			)
+			require.NoError(t, err)
+
+			decodedLimit, err := decoded.AssetRateLimit.
+				UnwrapOrErr(
+					errMissingRateLimit,
+				)
+			require.NoError(t, err)
+
 			accepted := fixedPointGen().Draw(
 				t, "accepted",
 			)
-			limit := fixedPointGen().Draw(t, "limit")
-			cmp := accepted.Cmp(limit)
-
-			// Sell: accepted must be <= limit.
-			if cmp <= 0 {
-				require.False(
-					t, accepted.Cmp(limit) > 0,
-					"sell pass: accepted=%v limit=%v",
-					accepted, limit,
-				)
-			} else {
-				require.True(
-					t, accepted.Cmp(limit) > 0,
-					"sell fail: accepted=%v limit=%v",
-					accepted, limit,
-				)
-			}
+			require.Equal(
+				t, accepted.Cmp(limit),
+				accepted.Cmp(decodedLimit),
+				"sell Cmp mismatch after roundtrip",
+			)
 		})
 	})
 }
+
+// errMissingRateLimit is returned when a rate limit is expected
+// but not present after wire roundtrip.
+var errMissingRateLimit = fmt.Errorf("rate limit missing")
 
 // TestBuyRequestRoundtripWithHintProperty verifies that a BuyRequest
 // with all fields (including AssetRateHint) survives a roundtrip.

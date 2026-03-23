@@ -485,6 +485,10 @@ func checkRateBound(req rfqmsg.Request,
 		if miss {
 			return RateBoundMissQuoteRespStatus
 		}
+
+	default:
+		log.Warnf("checkRateBound: unhandled request type %T",
+			req)
 	}
 
 	return ValidAcceptQuoteRespStatus
@@ -532,6 +536,10 @@ func checkMinFill(req rfqmsg.Request,
 		if notMet {
 			return MinFillNotMetQuoteRespStatus
 		}
+
+	default:
+		log.Warnf("checkMinFill: unhandled request type %T",
+			req)
 	}
 
 	return ValidAcceptQuoteRespStatus

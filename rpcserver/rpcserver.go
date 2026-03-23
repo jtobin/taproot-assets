@@ -8320,9 +8320,8 @@ func parseAssetSpecifier(reqAssetID []byte, reqAssetIDStr string,
 	return assetID, groupKey, nil
 }
 
-// unmarshalAssetBuyOrder unmarshals an asset buy order from the RPC form.
-// unmarshalOptionalFixedPoint converts an optional RPC FixedPoint into an
-// fn.Option[rfqmath.BigIntFixedPoint]. A nil input returns fn.None.
+// unmarshalOptionalFixedPoint converts an optional RPC FixedPoint into
+// an fn.Option[rfqmath.BigIntFixedPoint]. A nil input returns fn.None.
 func unmarshalOptionalFixedPoint(
 	fp *rfqrpc.FixedPoint) (fn.Option[rfqmath.BigIntFixedPoint], error) {
 

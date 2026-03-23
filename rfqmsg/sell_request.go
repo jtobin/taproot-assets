@@ -251,14 +251,14 @@ func (q *SellRequest) Validate() error {
 		return err
 	}
 
-	// Ensure rate limit is positive when set.
+	// Ensure rate limit is strictly positive when set.
 	err = fn.MapOptionZ(
 		q.AssetRateLimit,
 		func(limit rfqmath.BigIntFixedPoint) error {
 			zero := rfqmath.NewBigIntFromUint64(0)
-			if limit.Coefficient.Equals(zero) {
-				return fmt.Errorf("asset rate limit must " +
-					"be positive")
+			if !limit.Coefficient.Gt(zero) {
+				return fmt.Errorf("asset rate limit " +
+					"coefficient must be positive")
 			}
 			return nil
 		},
