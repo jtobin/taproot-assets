@@ -124,6 +124,8 @@ func TestResolveRequest(t *testing.T) {
 		req, err := rfqmsg.NewBuyRequest(
 			route.Vertex{0x01, 0x02, 0x03},
 			asset.NewSpecifierFromId(asset.ID{assetID}), 100,
+			fn.None[uint64](),
+			fn.None[rfqmath.BigIntFixedPoint](),
 			rateHint, "order-metadata",
 		)
 		require.NoError(t, err)
@@ -140,7 +142,10 @@ func TestResolveRequest(t *testing.T) {
 		req, err := rfqmsg.NewSellRequest(
 			route.Vertex{0x0A, 0x0B, 0x0C},
 			asset.NewSpecifierFromId(asset.ID{assetID}),
-			paymentMax, rateHint, "order-metadata",
+			paymentMax,
+			fn.None[lnwire.MilliSatoshi](),
+			fn.None[rfqmath.BigIntFixedPoint](),
+			rateHint, "order-metadata",
 		)
 		require.NoError(t, err)
 		return req
@@ -546,6 +551,8 @@ func TestVerifyAcceptQuote(t *testing.T) {
 			makeAccept: func(t *testing.T) rfqmsg.Accept {
 				buyReq, err := rfqmsg.NewBuyRequest(
 					peerID, assetSpec, 100,
+					fn.None[uint64](),
+					fn.None[rfqmath.BigIntFixedPoint](),
 					fn.None[rfqmsg.AssetRate](),
 					"metadata",
 				)
@@ -574,6 +581,8 @@ func TestVerifyAcceptQuote(t *testing.T) {
 			makeAccept: func(t *testing.T) rfqmsg.Accept {
 				buyReq, err := rfqmsg.NewBuyRequest(
 					peerID, assetSpec, 100,
+					fn.None[uint64](),
+					fn.None[rfqmath.BigIntFixedPoint](),
 					fn.None[rfqmsg.AssetRate](),
 					"metadata",
 				)
@@ -599,6 +608,8 @@ func TestVerifyAcceptQuote(t *testing.T) {
 			makeAccept: func(t *testing.T) rfqmsg.Accept {
 				buyReq, err := rfqmsg.NewBuyRequest(
 					peerID, assetSpec, 100,
+					fn.None[uint64](),
+					fn.None[rfqmath.BigIntFixedPoint](),
 					fn.None[rfqmsg.AssetRate](),
 					"metadata",
 				)
@@ -629,6 +640,8 @@ func TestVerifyAcceptQuote(t *testing.T) {
 			makeAccept: func(t *testing.T) rfqmsg.Accept {
 				buyReq, err := rfqmsg.NewBuyRequest(
 					peerID, assetSpec, 100,
+					fn.None[uint64](),
+					fn.None[rfqmath.BigIntFixedPoint](),
 					fn.None[rfqmsg.AssetRate](),
 					"metadata",
 				)
@@ -655,6 +668,8 @@ func TestVerifyAcceptQuote(t *testing.T) {
 			makeAccept: func(t *testing.T) rfqmsg.Accept {
 				buyReq, err := rfqmsg.NewBuyRequest(
 					peerID, assetSpec, 100,
+					fn.None[uint64](),
+					fn.None[rfqmath.BigIntFixedPoint](),
 					fn.None[rfqmsg.AssetRate](),
 					"metadata",
 				)
@@ -680,6 +695,8 @@ func TestVerifyAcceptQuote(t *testing.T) {
 			makeAccept: func(t *testing.T) rfqmsg.Accept {
 				buyReq, err := rfqmsg.NewBuyRequest(
 					peerID, assetSpec, 100,
+					fn.None[uint64](),
+					fn.None[rfqmath.BigIntFixedPoint](),
 					fn.None[rfqmsg.AssetRate](),
 					"metadata",
 				)
@@ -708,6 +725,8 @@ func TestVerifyAcceptQuote(t *testing.T) {
 				sellReq, err := rfqmsg.NewSellRequest(
 					peerID, assetSpec,
 					lnwire.MilliSatoshi(1000),
+					fn.None[lnwire.MilliSatoshi](),
+					fn.None[rfqmath.BigIntFixedPoint](),
 					fn.None[rfqmsg.AssetRate](),
 					"metadata",
 				)
@@ -737,6 +756,8 @@ func TestVerifyAcceptQuote(t *testing.T) {
 				sellReq, err := rfqmsg.NewSellRequest(
 					peerID, assetSpec,
 					lnwire.MilliSatoshi(1000),
+					fn.None[lnwire.MilliSatoshi](),
+					fn.None[rfqmath.BigIntFixedPoint](),
 					fn.None[rfqmsg.AssetRate](),
 					"metadata",
 				)
@@ -763,6 +784,8 @@ func TestVerifyAcceptQuote(t *testing.T) {
 				sellReq, err := rfqmsg.NewSellRequest(
 					peerID, assetSpec,
 					lnwire.MilliSatoshi(1000),
+					fn.None[lnwire.MilliSatoshi](),
+					fn.None[rfqmath.BigIntFixedPoint](),
 					fn.None[rfqmsg.AssetRate](),
 					"metadata",
 				)
@@ -789,6 +812,8 @@ func TestVerifyAcceptQuote(t *testing.T) {
 				sellReq, err := rfqmsg.NewSellRequest(
 					peerID, assetSpec,
 					lnwire.MilliSatoshi(1000),
+					fn.None[lnwire.MilliSatoshi](),
+					fn.None[rfqmath.BigIntFixedPoint](),
 					fn.None[rfqmsg.AssetRate](),
 					"metadata",
 				)
@@ -867,6 +892,8 @@ func TestResolveRequestWithoutPriceOracleRejects(t *testing.T) {
 
 	req, err := rfqmsg.NewBuyRequest(
 		peerID, assetSpec, 100,
+		fn.None[uint64](),
+		fn.None[rfqmath.BigIntFixedPoint](),
 		fn.None[rfqmsg.AssetRate](),
 		"metadata",
 	)
@@ -906,6 +933,8 @@ func TestVerifyAcceptQuoteWithoutPriceOracle(t *testing.T) {
 
 	buyReq, err := rfqmsg.NewBuyRequest(
 		peerID, assetSpec, 100,
+		fn.None[uint64](),
+		fn.None[rfqmath.BigIntFixedPoint](),
 		fn.None[rfqmsg.AssetRate](),
 		"metadata",
 	)

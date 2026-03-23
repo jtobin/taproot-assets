@@ -8,7 +8,9 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightninglabs/taproot-assets/asset"
+	"github.com/lightninglabs/taproot-assets/rfqmath"
 	lfn "github.com/lightningnetwork/lnd/fn/v2"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/tlv"
 )
 
@@ -213,6 +215,23 @@ func newRequestWireMsgDataFromBuy(q BuyRequest) (requestWireMsgData, error) {
 		)
 	}
 
+	// Set optional min asset amount.
+	var minInAsset tlv.OptionalRecordT[tlv.TlvType23, uint64]
+	q.AssetMinAmt.WhenSome(func(minAmt uint64) {
+		minInAsset = tlv.SomeRecordT[tlv.TlvType23](
+			tlv.NewPrimitiveRecord[tlv.TlvType23](minAmt),
+		)
+	})
+
+	// Set optional rate limit.
+	var assetRateLimit requestAssetRateLimit
+	q.AssetRateLimit.WhenSome(func(limit rfqmath.BigIntFixedPoint) {
+		wireRate := NewTlvFixedPointFromBigInt(limit)
+		assetRateLimit = tlv.SomeRecordT[tlv.TlvType29](
+			tlv.NewRecordT[tlv.TlvType29](wireRate),
+		)
+	})
+
 	// Encode message data component as TLV bytes.
 	return requestWireMsgData{
 		Version:             version,
@@ -225,6 +244,8 @@ func newRequestWireMsgDataFromBuy(q BuyRequest) (requestWireMsgData, error) {
 		OutAssetGroupKey:    outAssetGroupKey,
 		MaxInAsset:          maxInAsset,
 		InAssetRateHint:     inAssetRateHint,
+		MinInAsset:          minInAsset,
+		AssetRateLimit:      assetRateLimit,
 		PriceOracleMetadata: oracleMetadata,
 	}, nil
 }
@@ -293,6 +314,25 @@ func newRequestWireMsgDataFromSell(q SellRequest) (requestWireMsgData, error) {
 		)
 	}
 
+	// Set optional min payment amount.
+	var minOutAsset tlv.OptionalRecordT[tlv.TlvType25, uint64]
+	q.PaymentMinAmt.WhenSome(func(minAmt lnwire.MilliSatoshi) {
+		minOutAsset = tlv.SomeRecordT[tlv.TlvType25](
+			tlv.NewPrimitiveRecord[tlv.TlvType25](
+				uint64(minAmt),
+			),
+		)
+	})
+
+	// Set optional rate limit.
+	var assetRateLimit requestAssetRateLimit
+	q.AssetRateLimit.WhenSome(func(limit rfqmath.BigIntFixedPoint) {
+		wireRate := NewTlvFixedPointFromBigInt(limit)
+		assetRateLimit = tlv.SomeRecordT[tlv.TlvType29](
+			tlv.NewRecordT[tlv.TlvType29](wireRate),
+		)
+	})
+
 	// Encode message data component as TLV bytes.
 	return requestWireMsgData{
 		Version:             version,
@@ -304,6 +344,8 @@ func newRequestWireMsgDataFromSell(q SellRequest) (requestWireMsgData, error) {
 		OutAssetGroupKey:    outAssetGroupKey,
 		MaxInAsset:          maxInAsset,
 		OutAssetRateHint:    outAssetRateHint,
+		MinOutAsset:         minOutAsset,
+		AssetRateLimit:      assetRateLimit,
 		PriceOracleMetadata: oracleMetadata,
 	}, nil
 }
