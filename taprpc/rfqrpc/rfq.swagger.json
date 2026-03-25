@@ -593,6 +593,10 @@
         "asset_rate_limit": {
           "$ref": "#/definitions/rfqrpcFixedPoint",
           "description": "An optional rate limit constraint expressed as a fixed-point number.\nFor buy orders this is the minimum acceptable rate (asset units per\nBTC). If unset, no rate floor is enforced."
+        },
+        "execution_policy": {
+          "$ref": "#/definitions/rfqrpcExecutionPolicy",
+          "description": "The execution policy for this order. IOC (default) accepts any\npartial fill \u003e= min threshold. FOK requires the rate to support\nthe full max amount."
         }
       }
     },
@@ -687,6 +691,10 @@
         "asset_rate_limit": {
           "$ref": "#/definitions/rfqrpcFixedPoint",
           "description": "An optional rate limit constraint expressed as a fixed-point number.\nFor sell orders this is the maximum acceptable rate (asset units per\nBTC). If unset, no rate ceiling is enforced."
+        },
+        "execution_policy": {
+          "$ref": "#/definitions/rfqrpcExecutionPolicy",
+          "description": "The execution policy for this order. IOC (default) accepts any\npartial fill \u003e= min threshold. FOK requires the rate to support\nthe full max amount."
         }
       }
     },
@@ -791,6 +799,15 @@
           "description": "The 32-byte asset group key encoded as hex string (use this for\nREST)."
         }
       }
+    },
+    "rfqrpcExecutionPolicy": {
+      "type": "string",
+      "enum": [
+        "EXECUTION_POLICY_IOC",
+        "EXECUTION_POLICY_FOK"
+      ],
+      "default": "EXECUTION_POLICY_IOC",
+      "description": "ExecutionPolicy specifies how a quote request should be filled.\n\n - EXECUTION_POLICY_IOC: EXECUTION_POLICY_IOC is Immediate-Or-Cancel: accept any partial\nfill at or above the minimum threshold. This is the default.\n - EXECUTION_POLICY_FOK: EXECUTION_POLICY_FOK is Fill-Or-Kill: the accepted rate must\nsupport the full maximum amount or the quote is rejected."
     },
     "rfqrpcFixedPoint": {
       "type": "object",

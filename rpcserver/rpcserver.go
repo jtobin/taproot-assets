@@ -8409,11 +8409,19 @@ func unmarshalAssetBuyOrder(
 			"limit: %w", err)
 	}
 
+	// Unmarshal optional execution policy. Only FOK is
+	// explicitly set; IOC (0) is the default.
+	var execPolicy fn.Option[rfqmsg.ExecutionPolicy]
+	if req.ExecutionPolicy == rfqrpc.ExecutionPolicy_EXECUTION_POLICY_FOK {
+		execPolicy = fn.Some(rfqmsg.ExecutionPolicyFOK)
+	}
+
 	return &rfq.BuyOrder{
 		AssetSpecifier:      assetSpecifier,
 		AssetMaxAmt:         req.AssetMaxAmt,
 		AssetMinAmt:         assetMinAmt,
 		AssetRateLimit:      assetRateLimit,
+		ExecutionPolicy:     execPolicy,
 		Expiry:              expiry,
 		Peer:                fn.MaybeSome(peer),
 		PriceOracleMetadata: req.PriceOracleMetadata,
@@ -8644,11 +8652,19 @@ func unmarshalAssetSellOrder(
 			"limit: %w", err)
 	}
 
+	// Unmarshal optional execution policy. Only FOK is
+	// explicitly set; IOC (0) is the default.
+	var execPolicy fn.Option[rfqmsg.ExecutionPolicy]
+	if req.ExecutionPolicy == rfqrpc.ExecutionPolicy_EXECUTION_POLICY_FOK {
+		execPolicy = fn.Some(rfqmsg.ExecutionPolicyFOK)
+	}
+
 	return &rfq.SellOrder{
 		AssetSpecifier:      assetSpecifier,
 		PaymentMaxAmt:       lnwire.MilliSatoshi(req.PaymentMaxAmt),
 		PaymentMinAmt:       paymentMinAmt,
 		AssetRateLimit:      assetRateLimit,
+		ExecutionPolicy:     execPolicy,
 		Expiry:              expiry,
 		Peer:                peer,
 		PriceOracleMetadata: req.PriceOracleMetadata,
