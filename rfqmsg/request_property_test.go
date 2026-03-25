@@ -80,6 +80,27 @@ func optionalFixedPointGen() *rapid.Generator[fn.Option[rfqmath.BigIntFixedPoint
 	)
 }
 
+// optionalExecutionPolicyGen draws an
+// fn.Option[ExecutionPolicy] that is None one-third of the time,
+// IOC one-third, and FOK one-third.
+func optionalExecutionPolicyGen() *rapid.Generator[fn.Option[ExecutionPolicy]] {
+	return rapid.Custom(
+		func(t *rapid.T) fn.Option[ExecutionPolicy] {
+			v := rapid.IntRange(0, 2).Draw(
+				t, "execPolicy",
+			)
+			switch v {
+			case 0:
+				return fn.None[ExecutionPolicy]()
+			case 1:
+				return fn.Some(ExecutionPolicyIOC)
+			default:
+				return fn.Some(ExecutionPolicyFOK)
+			}
+		},
+	)
+}
+
 // assetIDGen draws a random 32-byte asset.ID.
 func assetIDGen() *rapid.Generator[asset.ID] {
 	return rapid.Custom(func(t *rapid.T) asset.ID {
@@ -121,10 +142,14 @@ func TestBuyRequestWireRoundtripProperty(t *testing.T) {
 		rateLimit := optionalFixedPointGen().Draw(
 			t, "rateLimit",
 		)
+		execPolicy := optionalExecutionPolicyGen().Draw(
+			t, "execPolicy",
+		)
 
 		req, err := NewBuyRequest(
 			peer, spec, maxAmt, minAmt,
 			rateLimit, fn.None[AssetRate](), "",
+			execPolicy,
 		)
 		require.NoError(t, err)
 
@@ -152,6 +177,9 @@ func TestBuyRequestWireRoundtripProperty(t *testing.T) {
 		requireOptFpEq(
 			t, rateLimit, decoded.AssetRateLimit,
 		)
+		requireOptExecPolicyEq(
+			t, execPolicy, decoded.ExecutionPolicy,
+		)
 	})
 }
 
@@ -174,11 +202,15 @@ func TestSellRequestWireRoundtripProperty(t *testing.T) {
 		rateLimit := optionalFixedPointGen().Draw(
 			t, "rateLimit",
 		)
+		execPolicy := optionalExecutionPolicyGen().Draw(
+			t, "execPolicy",
+		)
 
 		req, err := NewSellRequest(
 			peer, spec,
 			lnwire.MilliSatoshi(maxAmt), minAmt,
 			rateLimit, fn.None[AssetRate](), "",
+			execPolicy,
 		)
 		require.NoError(t, err)
 
@@ -208,6 +240,9 @@ func TestSellRequestWireRoundtripProperty(t *testing.T) {
 		requireOptFpEq(
 			t, rateLimit, decoded.AssetRateLimit,
 		)
+		requireOptExecPolicyEq(
+			t, execPolicy, decoded.ExecutionPolicy,
+		)
 	})
 }
 
@@ -229,10 +264,10 @@ func TestMinMaxConstraintProperty(t *testing.T) {
 				AssetSpecifier: asset.NewSpecifierFromId(
 					asset.ID{1},
 				),
-				AssetMaxAmt: maxAmt,
-				AssetMinAmt: fn.Some(minAmt),
+				AssetMaxAmt:    maxAmt,
+				AssetMinAmt:    fn.Some(minAmt),
 				AssetRateLimit: fn.None[rfqmath.BigIntFixedPoint](),
-				AssetRateHint: fn.None[AssetRate](),
+				AssetRateHint:  fn.None[AssetRate](),
 			}
 			require.NoError(t, req.Validate())
 		})
@@ -253,10 +288,10 @@ func TestMinMaxConstraintProperty(t *testing.T) {
 				AssetSpecifier: asset.NewSpecifierFromId(
 					asset.ID{1},
 				),
-				AssetMaxAmt: maxAmt,
-				AssetMinAmt: fn.Some(minAmt),
+				AssetMaxAmt:    maxAmt,
+				AssetMinAmt:    fn.Some(minAmt),
 				AssetRateLimit: fn.None[rfqmath.BigIntFixedPoint](),
-				AssetRateHint: fn.None[AssetRate](),
+				AssetRateHint:  fn.None[AssetRate](),
 			}
 			require.Error(t, req.Validate())
 		})
@@ -282,7 +317,7 @@ func TestMinMaxConstraintProperty(t *testing.T) {
 					lnwire.MilliSatoshi(minAmt),
 				),
 				AssetRateLimit: fn.None[rfqmath.BigIntFixedPoint](),
-				AssetRateHint: fn.None[AssetRate](),
+				AssetRateHint:  fn.None[AssetRate](),
 			}
 			require.NoError(t, req.Validate())
 		})
@@ -310,7 +345,7 @@ func TestMinMaxConstraintProperty(t *testing.T) {
 					lnwire.MilliSatoshi(minAmt),
 				),
 				AssetRateLimit: fn.None[rfqmath.BigIntFixedPoint](),
-				AssetRateHint: fn.None[AssetRate](),
+				AssetRateHint:  fn.None[AssetRate](),
 			}
 			require.Error(t, req.Validate())
 		})
@@ -421,6 +456,7 @@ func TestRateBoundEnforcementProperty(t *testing.T) {
 				fn.None[uint64](),
 				fn.Some(limit),
 				fn.None[AssetRate](), "",
+				fn.None[ExecutionPolicy](),
 			)
 			require.NoError(t, err)
 
@@ -475,6 +511,7 @@ func TestRateBoundEnforcementProperty(t *testing.T) {
 				fn.None[lnwire.MilliSatoshi](),
 				fn.Some(limit),
 				fn.None[AssetRate](), "",
+				fn.None[ExecutionPolicy](),
 			)
 			require.NoError(t, err)
 
@@ -540,9 +577,14 @@ func TestBuyRequestRoundtripWithHintProperty(t *testing.T) {
 		fp := fixedPointGen().Draw(t, "hintRate")
 		hint := fn.Some(NewAssetRate(fp, expiry))
 
+		execPolicy := optionalExecutionPolicyGen().Draw(
+			t, "execPolicy",
+		)
+
 		req, err := NewBuyRequest(
 			peer, spec, maxAmt, minAmt,
 			rateLimit, hint, "",
+			execPolicy,
 		)
 		require.NoError(t, err)
 
@@ -566,6 +608,9 @@ func TestBuyRequestRoundtripWithHintProperty(t *testing.T) {
 			t, rateLimit, decoded.AssetRateLimit,
 		)
 		require.True(t, decoded.AssetRateHint.IsSome())
+		requireOptExecPolicyEq(
+			t, execPolicy, decoded.ExecutionPolicy,
+		)
 	})
 }
 
@@ -627,4 +672,21 @@ func requireOptFpEq(t require.TestingT,
 		rfqmath.NewBigIntFixedPoint(0, 0),
 	)
 	require.Equal(t, 0, gotVal.Cmp(wantVal))
+}
+
+// requireOptExecPolicyEq asserts two optional ExecutionPolicy
+// values are equal.
+func requireOptExecPolicyEq(t require.TestingT,
+	want, got fn.Option[ExecutionPolicy]) {
+
+	if want.IsNone() {
+		require.True(t, got.IsNone())
+		return
+	}
+
+	require.True(t, got.IsSome())
+
+	wantVal := want.UnwrapOr(ExecutionPolicyIOC)
+	gotVal := got.UnwrapOr(ExecutionPolicyIOC)
+	require.Equal(t, wantVal, gotVal)
 }
