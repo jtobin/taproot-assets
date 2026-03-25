@@ -90,21 +90,29 @@ type AssetRateQuery struct {
 	Expiry fn.Option[time.Time]
 }
 
-// ResolveResp captures the portfolio pilot's resolution decision for an RFQ. It
-// carries either an accepted asset rate quote or a structured rejection reason.
+// ResolveResp captures the portfolio pilot's resolution decision for an
+// RFQ. It carries either an accepted asset rate quote or a structured
+// rejection reason, plus an optional fill amount.
 type ResolveResp struct {
-	// outcome holds either the accepted asset rate (left) or the rejection
-	// error (right).
+	// outcome holds either the accepted asset rate (left) or the
+	// rejection error (right).
 	outcome fn.Either[rfqmsg.AssetRate, rfqmsg.RejectErr]
+
+	// fillAmount is an optional fill quantity that caps the amount
+	// the responder is willing to accept.
+	fillAmount fn.Option[uint64]
 }
 
-// NewAcceptResolveResp builds an acceptance response with the provided asset
-// rate quote.
-func NewAcceptResolveResp(assetRate rfqmsg.AssetRate) ResolveResp {
+// NewAcceptResolveResp builds an acceptance response with the provided
+// asset rate quote and optional fill amount.
+func NewAcceptResolveResp(assetRate rfqmsg.AssetRate,
+	fillAmount fn.Option[uint64]) ResolveResp {
+
 	return ResolveResp{
 		outcome: fn.NewLeft[rfqmsg.AssetRate, rfqmsg.RejectErr](
 			assetRate,
 		),
+		fillAmount: fillAmount,
 	}
 }
 
@@ -116,6 +124,11 @@ func NewRejectResolveResp(rejectErr rfqmsg.RejectErr) ResolveResp {
 			rejectErr,
 		),
 	}
+}
+
+// FillAmount returns the optional fill quantity.
+func (r *ResolveResp) FillAmount() fn.Option[uint64] {
+	return r.fillAmount
 }
 
 // IsAccept reports whether the response contains an accepted asset rate.
@@ -275,7 +288,32 @@ func (p *InternalPortfolioPilot) ResolveRequest(ctx context.Context,
 			resp.Err)
 	}
 
-	return NewAcceptResolveResp(resp.AssetRate), nil
+	// Enforce the requester's constraints on the responder side
+	// to avoid wasted round-trips.
+	status := checkRateBound(request, resp.AssetRate.Rate)
+	if status != ValidAcceptQuoteRespStatus {
+		return NewRejectResolveResp(
+			rejectForStatus(status),
+		), nil
+	}
+
+	status = checkMinFill(request, resp.AssetRate.Rate)
+	if status != ValidAcceptQuoteRespStatus {
+		return NewRejectResolveResp(
+			rejectForStatus(status),
+		), nil
+	}
+
+	status = checkFOK(request, resp.AssetRate.Rate)
+	if status != ValidAcceptQuoteRespStatus {
+		return NewRejectResolveResp(
+			rejectForStatus(status),
+		), nil
+	}
+
+	return NewAcceptResolveResp(
+		resp.AssetRate, fn.None[uint64](),
+	), nil
 }
 
 // VerifyAcceptQuote verifies that an accepted quote from a peer meets
@@ -602,4 +640,19 @@ func checkMinFill(req rfqmsg.Request,
 	}
 
 	return ValidAcceptQuoteRespStatus
+}
+
+// rejectForStatus maps a constraint-violation QuoteRespStatus to the
+// corresponding RejectErr.
+func rejectForStatus(status QuoteRespStatus) rfqmsg.RejectErr {
+	switch status {
+	case RateBoundMissQuoteRespStatus:
+		return rfqmsg.ErrPriceBoundMiss
+	case MinFillNotMetQuoteRespStatus:
+		return rfqmsg.ErrMinFillNotMet
+	case FOKNotViableQuoteRespStatus:
+		return rfqmsg.ErrFOKNotViable
+	default:
+		return rfqmsg.ErrUnknownReject
+	}
 }
