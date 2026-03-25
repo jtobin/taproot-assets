@@ -211,7 +211,12 @@ func (m *acceptWireMsgData) Decode(r io.Reader) error {
 	}
 
 	if _, ok := tlvMap[maxInAsset.TlvType()]; ok {
-		m.MaxInAsset = tlv.SomeRecordT(maxInAsset)
+		// Normalize 0 to None: a zero fill is semantically
+		// "unset" (full request max) and must not cap the
+		// policy at zero.
+		if maxInAsset.Val > 0 {
+			m.MaxInAsset = tlv.SomeRecordT(maxInAsset)
+		}
 	}
 
 	return nil
