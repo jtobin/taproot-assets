@@ -619,6 +619,162 @@ func TestResolveRequest(t *testing.T) {
 				)
 			},
 		},
+		{
+			name:         "sell: rate bound reject",
+			expectReject: true,
+			makeReq: func(t *testing.T) rfqmsg.Request {
+				// Rate limit of 50: oracle's 200 is
+				// above the sell upper bound.
+				req, err := rfqmsg.NewSellRequest(
+					route.Vertex{0x0A, 0x0B, 0x0C},
+					asset.NewSpecifierFromId(
+						asset.ID{0xB0},
+					),
+					lnwire.MilliSatoshi(10000),
+					fn.None[lnwire.MilliSatoshi](),
+					fn.Some(
+						rfqmath.NewBigIntFixedPoint(
+							50, 0,
+						),
+					),
+					fn.None[rfqmsg.AssetRate](),
+					"metadata",
+					fn.None[rfqmsg.ExecutionPolicy](),
+				)
+				require.NoError(t, err)
+				return req
+			},
+			setupOracle: func(o *MockPriceOracle) {
+				expectQueryBuyPrice(
+					o, &OracleResponse{
+						AssetRate: expectedSellRate,
+					}, nil,
+				)
+			},
+			assertFn: func(
+				t *testing.T, resp ResolveResp,
+				_ rfqmsg.Request,
+				_ *MockPriceOracle,
+			) {
+
+				require.True(t, resp.IsReject())
+				resp.WhenReject(
+					func(e rfqmsg.RejectErr) {
+						require.Equal(
+							t,
+							rfqmsg.PriceBoundMissRejectCode,
+							e.Code,
+						)
+					},
+				)
+			},
+		},
+		{
+			name:         "sell: min fill reject",
+			expectReject: true,
+			makeReq: func(t *testing.T) rfqmsg.Request {
+				// Low rate (1 unit/BTC): 1 msat
+				// converts to 0 units.
+				req, err := rfqmsg.NewSellRequest(
+					route.Vertex{0x0A, 0x0B, 0x0C},
+					asset.NewSpecifierFromId(
+						asset.ID{0xB1},
+					),
+					lnwire.MilliSatoshi(1),
+					fn.Some(lnwire.MilliSatoshi(1)),
+					fn.None[rfqmath.BigIntFixedPoint](),
+					fn.None[rfqmsg.AssetRate](),
+					"metadata",
+					fn.None[rfqmsg.ExecutionPolicy](),
+				)
+				require.NoError(t, err)
+				return req
+			},
+			setupOracle: func(o *MockPriceOracle) {
+				lowRate := rfqmsg.NewAssetRate(
+					rfqmath.NewBigIntFixedPoint(
+						1, 0,
+					),
+					sellResponseExpiry,
+				)
+				expectQueryBuyPrice(
+					o, &OracleResponse{
+						AssetRate: lowRate,
+					}, nil,
+				)
+			},
+			assertFn: func(
+				t *testing.T, resp ResolveResp,
+				_ rfqmsg.Request,
+				_ *MockPriceOracle,
+			) {
+
+				require.True(t, resp.IsReject())
+				resp.WhenReject(
+					func(e rfqmsg.RejectErr) {
+						require.Equal(
+							t,
+							rfqmsg.MinFillNotMetRejectCode,
+							e.Code,
+						)
+					},
+				)
+			},
+		},
+		{
+			name:         "sell: FOK reject",
+			expectReject: true,
+			makeReq: func(t *testing.T) rfqmsg.Request {
+				// Low rate (1 unit/BTC): 1 msat
+				// converts to 0 units.
+				req, err := rfqmsg.NewSellRequest(
+					route.Vertex{0x0A, 0x0B, 0x0C},
+					asset.NewSpecifierFromId(
+						asset.ID{0xB2},
+					),
+					lnwire.MilliSatoshi(1),
+					fn.None[lnwire.MilliSatoshi](),
+					fn.None[rfqmath.BigIntFixedPoint](),
+					fn.None[rfqmsg.AssetRate](),
+					"metadata",
+					fn.Some(
+						rfqmsg.ExecutionPolicyFOK,
+					),
+				)
+				require.NoError(t, err)
+				return req
+			},
+			setupOracle: func(o *MockPriceOracle) {
+				lowRate := rfqmsg.NewAssetRate(
+					rfqmath.NewBigIntFixedPoint(
+						1, 0,
+					),
+					sellResponseExpiry,
+				)
+				expectQueryBuyPrice(
+					o, &OracleResponse{
+						AssetRate: lowRate,
+					}, nil,
+				)
+			},
+			assertFn: func(
+				t *testing.T, resp ResolveResp,
+				_ rfqmsg.Request,
+				_ *MockPriceOracle,
+			) {
+
+				require.True(t, resp.IsReject())
+				resp.WhenReject(
+					func(e rfqmsg.RejectErr) {
+						require.Equal(
+							t,
+							rfqmsg.FOKNotViableRejectCode,
+							e.Code,
+						)
+					},
+				)
+			},
+		},
 	}
 
 	for _, tc := range tests {
