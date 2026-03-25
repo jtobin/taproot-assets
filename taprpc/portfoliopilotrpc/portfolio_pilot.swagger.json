@@ -334,10 +334,11 @@
         "REJECT_CODE_UNSPECIFIED",
         "REJECT_CODE_PRICE_ORACLE_UNAVAILABLE",
         "REJECT_CODE_MIN_FILL_NOT_MET",
-        "REJECT_CODE_PRICE_BOUND_MISS"
+        "REJECT_CODE_PRICE_BOUND_MISS",
+        "REJECT_CODE_FOK_NOT_VIABLE"
       ],
       "default": "REJECT_CODE_UNSPECIFIED",
-      "description": "RejectCode represents the possible error codes that can be returned in a\nResolveRequestResponse reject result.\n\n - REJECT_CODE_UNSPECIFIED: REJECT_CODE_UNSPECIFIED indicates an unspecified error.\n - REJECT_CODE_PRICE_ORACLE_UNAVAILABLE: REJECT_CODE_PRICE_ORACLE_UNAVAILABLE indicates that pricing could not be\nprovided due to an unavailable oracle.\n - REJECT_CODE_MIN_FILL_NOT_MET: REJECT_CODE_MIN_FILL_NOT_MET indicates that the minimum fill\nconstraint was not satisfiable at the accepted rate.\n - REJECT_CODE_PRICE_BOUND_MISS: REJECT_CODE_PRICE_BOUND_MISS indicates that the accepted rate\nviolated the requester's rate limit constraint."
+      "description": "RejectCode represents the possible error codes that can be returned in a\nResolveRequestResponse reject result.\n\n - REJECT_CODE_UNSPECIFIED: REJECT_CODE_UNSPECIFIED indicates an unspecified error.\n - REJECT_CODE_PRICE_ORACLE_UNAVAILABLE: REJECT_CODE_PRICE_ORACLE_UNAVAILABLE indicates that pricing could not be\nprovided due to an unavailable oracle.\n - REJECT_CODE_MIN_FILL_NOT_MET: REJECT_CODE_MIN_FILL_NOT_MET indicates that the minimum fill\nconstraint was not satisfiable at the accepted rate.\n - REJECT_CODE_PRICE_BOUND_MISS: REJECT_CODE_PRICE_BOUND_MISS indicates that the accepted rate\nviolated the requester's rate limit constraint.\n - REJECT_CODE_FOK_NOT_VIABLE: REJECT_CODE_FOK_NOT_VIABLE indicates that the FOK execution\npolicy could not be satisfied at the accepted rate."
     },
     "portfoliopilotrpcRejectErr": {
       "type": "object",
@@ -377,6 +378,11 @@
         "reject": {
           "$ref": "#/definitions/portfoliopilotrpcRejectErr",
           "description": "reject is the rejection reason for the request."
+        },
+        "accepted_max_amount": {
+          "type": "string",
+          "format": "uint64",
+          "description": "accepted_max_amount is an optional fill quantity that caps the\namount the responder is willing to accept. Only meaningful when\naccept is set; 0 means no fill cap (full request max)."
         }
       },
       "description": "ResolveRequestResponse is the response to a ResolveRequest call."

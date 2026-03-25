@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lightninglabs/taproot-assets/asset"
+	"github.com/lightninglabs/taproot-assets/fn"
 	"github.com/lightninglabs/taproot-assets/rfqmath"
 	"github.com/lightninglabs/taproot-assets/rfqmsg"
 	"github.com/lightninglabs/taproot-assets/rpcutils"
@@ -164,7 +165,12 @@ func (r *RpcPortfolioPilot) ResolveRequest(ctx context.Context,
 				err)
 		}
 
-		return NewAcceptResolveResp(*assetRate), nil
+		fillAmount := fn.None[uint64]()
+		if resp.AcceptedMaxAmount > 0 {
+			fillAmount = fn.Some(resp.AcceptedMaxAmount)
+		}
+
+		return NewAcceptResolveResp(*assetRate, fillAmount), nil
 
 	case *pilotrpc.ResolveRequestResponse_Reject:
 		if result.Reject == nil {
@@ -629,6 +635,8 @@ func rpcUnmarshalRejectCode(
 		return rfqmsg.MinFillNotMetRejectCode
 	case pilotrpc.RejectCode_REJECT_CODE_PRICE_BOUND_MISS:
 		return rfqmsg.PriceBoundMissRejectCode
+	case pilotrpc.RejectCode_REJECT_CODE_FOK_NOT_VIABLE:
+		return rfqmsg.FOKNotViableRejectCode
 	default:
 		return rfqmsg.PriceOracleUnspecifiedRejectCode
 	}
