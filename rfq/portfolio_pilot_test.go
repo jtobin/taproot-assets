@@ -1595,9 +1595,9 @@ func TestVerifyAcceptQuote(t *testing.T) {
 				require.NoError(t, err)
 
 				return &rfqmsg.BuyAccept{
-					Peer:    peerID,
-					Request: *buyReq,
-					AssetRate: peerRate,
+					Peer:              peerID,
+					Request:           *buyReq,
+					AssetRate:         peerRate,
 					AcceptedMaxAmount: fn.Some[uint64](30),
 				}
 			},
@@ -1627,9 +1627,9 @@ func TestVerifyAcceptQuote(t *testing.T) {
 				require.NoError(t, err)
 
 				return &rfqmsg.BuyAccept{
-					Peer:    peerID,
-					Request: *buyReq,
-					AssetRate: peerRate,
+					Peer:              peerID,
+					Request:           *buyReq,
+					AssetRate:         peerRate,
 					AcceptedMaxAmount: fn.Some[uint64](80),
 				}
 			},
@@ -1641,6 +1641,38 @@ func TestVerifyAcceptQuote(t *testing.T) {
 				)
 			},
 			expectStatus: FOKNotViableQuoteRespStatus,
+			expectErr:    false,
+		},
+		{
+			name: "buy accept: IOC partial fill accepted",
+			makeAccept: func(t *testing.T) rfqmsg.Accept {
+				buyReq, err := rfqmsg.NewBuyRequest(
+					peerID, assetSpec, 100,
+					fn.None[uint64](),
+					fn.None[rfqmath.BigIntFixedPoint](),
+					fn.None[rfqmsg.AssetRate](),
+					"metadata",
+					fn.Some(
+						rfqmsg.ExecutionPolicyIOC,
+					),
+				)
+				require.NoError(t, err)
+
+				return &rfqmsg.BuyAccept{
+					Peer:              peerID,
+					Request:           *buyReq,
+					AssetRate:         peerRate,
+					AcceptedMaxAmount: fn.Some[uint64](60),
+				}
+			},
+			setupOracle: func(p *MockPriceOracle) {
+				expectQueryBuyPrice(
+					p, &OracleResponse{
+						AssetRate: oracleRateMatch,
+					}, nil,
+				)
+			},
+			expectStatus: ValidAcceptQuoteRespStatus,
 			expectErr:    false,
 		},
 		{
@@ -1660,9 +1692,9 @@ func TestVerifyAcceptQuote(t *testing.T) {
 				require.NoError(t, err)
 
 				return &rfqmsg.SellAccept{
-					Peer:    peerID,
-					Request: *sellReq,
-					AssetRate: peerRate,
+					Peer:              peerID,
+					Request:           *sellReq,
+					AssetRate:         peerRate,
 					AcceptedMaxAmount: fn.Some[uint64](300),
 				}
 			},
@@ -1692,9 +1724,9 @@ func TestVerifyAcceptQuote(t *testing.T) {
 				require.NoError(t, err)
 
 				return &rfqmsg.SellAccept{
-					Peer:    peerID,
-					Request: *sellReq,
-					AssetRate: peerRate,
+					Peer:              peerID,
+					Request:           *sellReq,
+					AssetRate:         peerRate,
 					AcceptedMaxAmount: fn.Some[uint64](800),
 				}
 			},
@@ -1721,9 +1753,9 @@ func TestVerifyAcceptQuote(t *testing.T) {
 				require.NoError(t, err)
 
 				return &rfqmsg.BuyAccept{
-					Peer:    peerID,
-					Request: *buyReq,
-					AssetRate: peerRate,
+					Peer:              peerID,
+					Request:           *buyReq,
+					AssetRate:         peerRate,
 					AcceptedMaxAmount: fn.Some[uint64](60),
 				}
 			},
@@ -2307,6 +2339,30 @@ func TestCheckFillConstraints(t *testing.T) {
 			},
 			fill:   fn.Some[uint64](800),
 			expect: FOKNotViableQuoteRespStatus,
+		},
+		{
+			name: "buy: IOC fill < max (partial fill ok)",
+			req: &rfqmsg.BuyRequest{
+				AssetSpecifier: spec,
+				AssetMaxAmt:    100,
+				ExecutionPolicy: fn.Some(
+					rfqmsg.ExecutionPolicyIOC,
+				),
+			},
+			fill:   fn.Some[uint64](60),
+			expect: ValidAcceptQuoteRespStatus,
+		},
+		{
+			name: "sell: IOC fill < max (partial fill ok)",
+			req: &rfqmsg.SellRequest{
+				AssetSpecifier: spec,
+				PaymentMaxAmt:  1000,
+				ExecutionPolicy: fn.Some(
+					rfqmsg.ExecutionPolicyIOC,
+				),
+			},
+			fill:   fn.Some[uint64](600),
+			expect: ValidAcceptQuoteRespStatus,
 		},
 	}
 
