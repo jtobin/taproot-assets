@@ -419,6 +419,16 @@ func (p *InternalPortfolioPilot) VerifyAcceptQuote(ctx context.Context,
 		return status, nil
 	}
 
+	// Enforce that the negotiated fill amount (if present) is
+	// compatible with the requester's min-fill and FOK
+	// constraints.
+	status = checkFillConstraints(
+		req, accept.AcceptedFillAmount(),
+	)
+	if status != ValidAcceptQuoteRespStatus {
+		return status, nil
+	}
+
 	return ValidAcceptQuoteRespStatus, nil
 }
 
@@ -637,6 +647,69 @@ func checkMinFill(req rfqmsg.Request,
 	default:
 		log.Warnf("checkMinFill: unhandled request type %T",
 			req)
+	}
+
+	return ValidAcceptQuoteRespStatus
+}
+
+// checkFillConstraints verifies that the negotiated fill amount (if
+// present) is compatible with the requester's min-fill and FOK
+// constraints. For a buy request the fill is in asset units; for a
+// sell request the fill is in msat.
+func checkFillConstraints(req rfqmsg.Request,
+	fill fn.Option[uint64]) QuoteRespStatus {
+
+	if fill.IsNone() {
+		// No fill → full request max implied; nothing to check.
+		return ValidAcceptQuoteRespStatus
+	}
+
+	fillAmt := fill.UnwrapOr(0)
+
+	switch r := req.(type) {
+	case *rfqmsg.BuyRequest:
+		// Fill must be >= min fill when set.
+		tooSmall := fn.MapOptionZ(
+			r.AssetMinAmt,
+			func(minAmt uint64) bool {
+				return fillAmt < minAmt
+			},
+		)
+		if tooSmall {
+			return MinFillNotMetQuoteRespStatus
+		}
+
+		// FOK requires the full max to be fillable.
+		if isFOK(r.ExecutionPolicy) &&
+			fillAmt < r.AssetMaxAmt {
+
+			return FOKNotViableQuoteRespStatus
+		}
+
+	case *rfqmsg.SellRequest:
+		fillMsat := lnwire.MilliSatoshi(fillAmt)
+
+		// Fill must be >= min fill when set.
+		tooSmall := fn.MapOptionZ(
+			r.PaymentMinAmt,
+			func(minAmt lnwire.MilliSatoshi) bool {
+				return fillMsat < minAmt
+			},
+		)
+		if tooSmall {
+			return MinFillNotMetQuoteRespStatus
+		}
+
+		// FOK requires the full max to be fillable.
+		if isFOK(r.ExecutionPolicy) &&
+			fillMsat < r.PaymentMaxAmt {
+
+			return FOKNotViableQuoteRespStatus
+		}
+
+	default:
+		log.Warnf("checkFillConstraints: unhandled "+
+			"request type %T", req)
 	}
 
 	return ValidAcceptQuoteRespStatus
