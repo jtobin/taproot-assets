@@ -406,6 +406,18 @@ enum QuoteRespStatus {
     // VALID_ACCEPT_QUOTE indicates that the accepted quote passed all
     // validation checks successfully.
     VALID_ACCEPT_QUOTE = 4;
+
+    // MIN_FILL_NOT_MET indicates that the minimum fill constraint was
+    // not satisfiable at the accepted rate.
+    MIN_FILL_NOT_MET = 5;
+
+    // RATE_BOUND_MISS indicates that the accepted rate violated the
+    // requester's rate limit constraint.
+    RATE_BOUND_MISS = 6;
+
+    // FOK_NOT_VIABLE indicates that the FOK execution policy could
+    // not be satisfied at the accepted rate.
+    FOK_NOT_VIABLE = 7;
 }
 
 // InvalidQuoteResponse is a message that is returned when a quote response is

@@ -322,10 +322,11 @@
         "PORTFOLIO_PILOT_ERR",
         "VALID_ACCEPT_QUOTE",
         "MIN_FILL_NOT_MET",
-        "RATE_BOUND_MISS"
+        "RATE_BOUND_MISS",
+        "FOK_NOT_VIABLE"
       ],
       "default": "INVALID_ASSET_RATES",
-      "description": "QuoteRespStatus is an enum that represents the status of a quote response.\n\n - INVALID_ASSET_RATES: INVALID_ASSET_RATES indicates that at least one asset rate in the\nquote response is invalid.\n - INVALID_EXPIRY: INVALID_EXPIRY indicates that the expiry in the quote response is\ninvalid.\n - PRICE_ORACLE_QUERY_ERR: PRICE_ORACLE_QUERY_ERR indicates that an error occurred when querying the\nprice oracle whilst evaluating the quote response.\n - PORTFOLIO_PILOT_ERR: PORTFOLIO_PILOT_ERR indicates that an unexpected error occurred in the\nportfolio pilot while evaluating the quote response.\n - VALID_ACCEPT_QUOTE: VALID_ACCEPT_QUOTE indicates that the accepted quote passed all\nvalidation checks successfully.\n - MIN_FILL_NOT_MET: MIN_FILL_NOT_MET indicates that the minimum fill constraint was\nnot satisfiable at the accepted rate.\n - RATE_BOUND_MISS: RATE_BOUND_MISS indicates that the accepted rate violated the\nrequester's rate limit constraint."
+      "description": "QuoteRespStatus is an enum that represents the status of a quote response.\n\n - INVALID_ASSET_RATES: INVALID_ASSET_RATES indicates that at least one asset rate in the\nquote response is invalid.\n - INVALID_EXPIRY: INVALID_EXPIRY indicates that the expiry in the quote response is\ninvalid.\n - PRICE_ORACLE_QUERY_ERR: PRICE_ORACLE_QUERY_ERR indicates that an error occurred when querying the\nprice oracle whilst evaluating the quote response.\n - PORTFOLIO_PILOT_ERR: PORTFOLIO_PILOT_ERR indicates that an unexpected error occurred in the\nportfolio pilot while evaluating the quote response.\n - VALID_ACCEPT_QUOTE: VALID_ACCEPT_QUOTE indicates that the accepted quote passed all\nvalidation checks successfully.\n - MIN_FILL_NOT_MET: MIN_FILL_NOT_MET indicates that the minimum fill constraint was\nnot satisfiable at the accepted rate.\n - RATE_BOUND_MISS: RATE_BOUND_MISS indicates that the accepted rate violated the\nrequester's rate limit constraint.\n - FOK_NOT_VIABLE: FOK_NOT_VIABLE indicates that the FOK execution policy could\nnot be satisfied at the accepted rate."
     },
     "portfoliopilotrpcRejectCode": {
       "type": "string",
