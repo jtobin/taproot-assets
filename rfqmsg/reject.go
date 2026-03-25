@@ -97,6 +97,10 @@ const (
 	// PriceBoundMissRejectCode indicates that the accepted rate
 	// violated the requester's rate limit constraint.
 	PriceBoundMissRejectCode RejectCode = 3
+
+	// FOKNotViableRejectCode indicates that the FOK execution
+	// policy could not be satisfied at the accepted rate.
+	FOKNotViableRejectCode RejectCode = 4
 )
 
 var (
@@ -126,6 +130,13 @@ var (
 	ErrPriceBoundMiss = RejectErr{
 		Code: PriceBoundMissRejectCode,
 		Msg:  "rate limit constraint violated",
+	}
+
+	// ErrFOKNotViable is the error for when the FOK execution
+	// policy cannot be satisfied at the accepted rate.
+	ErrFOKNotViable = RejectErr{
+		Code: FOKNotViableRejectCode,
+		Msg:  "FOK not viable at accepted rate",
 	}
 )
 
