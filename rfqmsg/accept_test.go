@@ -21,6 +21,7 @@ type acceptEncodeDecodeTC struct {
 	sig          [64]byte
 	inAssetRate  TlvFixedPoint
 	outAssetRate TlvFixedPoint
+	maxInAsset   acceptMaxInAsset
 }
 
 // MsgData generates a acceptWireMsgData instance from the test case.
@@ -39,6 +40,7 @@ func (tc acceptEncodeDecodeTC) MsgData() acceptWireMsgData {
 		Sig:          sig,
 		InAssetRate:  inAssetRate,
 		OutAssetRate: outAssetRate,
+		MaxInAsset:   tc.maxInAsset,
 	}
 }
 
@@ -80,6 +82,29 @@ func TestAcceptMsgDataEncodeDecode(t *testing.T) {
 			id:           id,
 			expiry:       expiry,
 			sig:          zeroSig,
+			inAssetRate:  inAssetRate,
+			outAssetRate: outAssetRate,
+		},
+		{
+			testName:     "with max in-asset fill",
+			version:      V1,
+			id:           id,
+			expiry:       expiry,
+			sig:          randSig,
+			inAssetRate:  inAssetRate,
+			outAssetRate: outAssetRate,
+			maxInAsset: tlv.SomeRecordT(
+				tlv.NewPrimitiveRecord[tlv.TlvType11](
+					uint64(500),
+				),
+			),
+		},
+		{
+			testName:     "no max in-asset fill",
+			version:      V1,
+			id:           id,
+			expiry:       expiry,
+			sig:          randSig,
 			inAssetRate:  inAssetRate,
 			outAssetRate: outAssetRate,
 		},
