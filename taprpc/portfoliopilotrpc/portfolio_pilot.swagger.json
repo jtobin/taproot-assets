@@ -139,6 +139,11 @@
         "sell_request": {
           "$ref": "#/definitions/portfoliopilotrpcSellRequest",
           "description": "sell_request is the original sell request."
+        },
+        "accepted_max_amount": {
+          "type": "string",
+          "format": "uint64",
+          "description": "accepted_max_amount is the optional negotiated fill quantity.\n0 means no fill cap (full request max). The unit depends on\nthe request type: asset units for a buy request, msat for a\nsell request."
         }
       },
       "description": "AcceptedQuote bundles an accepted quote and its original request."
@@ -382,7 +387,7 @@
         "accepted_max_amount": {
           "type": "string",
           "format": "uint64",
-          "description": "accepted_max_amount is an optional fill quantity that caps the\namount the responder is willing to accept. Only meaningful when\naccept is set; 0 means no fill cap (full request max)."
+          "description": "accepted_max_amount is an optional fill quantity that caps the\namount the responder is willing to accept. Only meaningful when\naccept is set; 0 means no fill cap (full request max). The unit\ndepends on the request type: asset units for a buy request, msat\nfor a sell request."
         }
       },
       "description": "ResolveRequestResponse is the response to a ResolveRequest call."

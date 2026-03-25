@@ -304,7 +304,9 @@ message ResolveRequestResponse {
 
     // accepted_max_amount is an optional fill quantity that caps the
     // amount the responder is willing to accept. Only meaningful when
-    // accept is set; 0 means no fill cap (full request max).
+    // accept is set; 0 means no fill cap (full request max). The unit
+    // depends on the request type: asset units for a buy request, msat
+    // for a sell request.
     uint64 accepted_max_amount = 3;
 }
 
@@ -323,6 +325,12 @@ message AcceptedQuote {
         // sell_request is the original sell request.
         SellRequest sell_request = 4;
     }
+
+    // accepted_max_amount is the optional negotiated fill quantity.
+    // 0 means no fill cap (full request max). The unit depends on
+    // the request type: asset units for a buy request, msat for a
+    // sell request.
+    uint64 accepted_max_amount = 5;
 }
 
 // VerifyAcceptQuoteRequest specifies an accepted quote to verify.

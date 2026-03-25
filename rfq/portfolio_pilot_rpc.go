@@ -319,9 +319,10 @@ func rpcMarshalVerifyAcceptQuoteRequest(
 		}
 		return &pilotrpc.VerifyAcceptQuoteRequest{
 			Accept: &pilotrpc.AcceptedQuote{
-				PeerId:       peer[:],
-				AcceptedRate: rpcAcceptedRate,
-				Request:      requestWrapper,
+				PeerId:             peer[:],
+				AcceptedRate:       rpcAcceptedRate,
+				Request:            requestWrapper,
+				AcceptedMaxAmount:  msg.AcceptedMaxAmount.UnwrapOr(0),
 			},
 		}, nil
 
@@ -344,9 +345,10 @@ func rpcMarshalVerifyAcceptQuoteRequest(
 		}
 		return &pilotrpc.VerifyAcceptQuoteRequest{
 			Accept: &pilotrpc.AcceptedQuote{
-				PeerId:       peer[:],
-				AcceptedRate: rpcAcceptedRate,
-				Request:      requestWrapper,
+				PeerId:             peer[:],
+				AcceptedRate:       rpcAcceptedRate,
+				Request:            requestWrapper,
+				AcceptedMaxAmount:  msg.AcceptedMaxAmount.UnwrapOr(0),
 			},
 		}, nil
 
