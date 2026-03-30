@@ -1,7 +1,8 @@
 // This example demonstrates a basic RPC portfolio pilot server
 // that implements ResolveRequest, VerifyAcceptQuote, and
-// QueryAssetRates. The server returns fixed asset rates and
-// supports configurable fill caps via flags.
+// QueryAssetRates. The server returns fixed asset rates,
+// supports configurable fill caps, and enforces rate bound,
+// min fill, and fill constraint checks on accepted quotes.
 //
 // Flags:
 //
@@ -36,6 +37,7 @@ import (
 	"github.com/lightninglabs/taproot-assets/rfqmsg"
 	"github.com/lightninglabs/taproot-assets/rpcutils"
 	"github.com/lightninglabs/taproot-assets/taprpc/portfoliopilotrpc"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
@@ -186,10 +188,39 @@ func (p *RpcPortfolioPilotServer) ResolveRequest(_ context.Context,
 	}, nil
 }
 
-// VerifyAcceptQuote verifies an accepted quote from a peer and returns the
-// validation status. This example logs the peer ID and always returns
-// VALID_ACCEPT_QUOTE.
-func (p *RpcPortfolioPilotServer) VerifyAcceptQuote(_ context.Context,
+// amountIsTransportable returns true when amt converts to a
+// non-zero result at the given rate. For buy (rateBoundCmp < 0)
+// the amount is asset units converting to msat; for sell
+// (rateBoundCmp > 0) the amount is msat converting to asset
+// units.
+func amountIsTransportable(amt uint64,
+	rate rfqmath.BigIntFixedPoint, rateBoundCmp int) bool {
+
+	if rateBoundCmp < 0 {
+		// Buy: asset units → msat.
+		units := rfqmath.FixedPoint[rfqmath.BigInt]{
+			Coefficient: rfqmath.NewBigIntFromUint64(
+				amt,
+			),
+			Scale: 0,
+		}
+		return rfqmath.UnitsToMilliSatoshi(units, rate) != 0
+	}
+
+	// Sell: msat → asset units.
+	units := rfqmath.MilliSatoshiToUnits(
+		lnwire.MilliSatoshi(amt), rate,
+	)
+	zero := rfqmath.NewBigIntFromUint64(0)
+
+	return !units.Coefficient.Equals(zero)
+}
+
+// VerifyAcceptQuote verifies an accepted quote from a peer by
+// checking rate bound, min fill, and fill constraints. Returns
+// the appropriate QuoteRespStatus.
+func (p *RpcPortfolioPilotServer) VerifyAcceptQuote(
+	_ context.Context,
 	req *portfoliopilotrpc.VerifyAcceptQuoteRequest) (
 	*portfoliopilotrpc.VerifyAcceptQuoteResponse, error) {
 
@@ -197,10 +228,104 @@ func (p *RpcPortfolioPilotServer) VerifyAcceptQuote(_ context.Context,
 		return nil, fmt.Errorf("accept quote is nil")
 	}
 
-	log.Printf("VerifyAcceptQuote peer=%x", req.Accept.PeerId)
+	accept := req.Accept
+	log.Printf("VerifyAcceptQuote peer=%x", accept.PeerId)
 
+	// Parse accepted rate.
+	rpcRate := accept.GetAcceptedRate()
+	if rpcRate == nil || rpcRate.GetRate() == nil {
+		log.Printf("VerifyAcceptQuote: invalid rate")
+		return &portfoliopilotrpc.VerifyAcceptQuoteResponse{
+			Status: portfoliopilotrpc.
+				QuoteRespStatus_INVALID_ASSET_RATES,
+		}, nil
+	}
+	acceptedRate, err := rpcutils.UnmarshalPortfolioFixedPoint(
+		rpcRate.GetRate(),
+	)
+	if err != nil {
+		log.Printf("VerifyAcceptQuote: unmarshal rate: %v",
+			err)
+		return &portfoliopilotrpc.VerifyAcceptQuoteResponse{
+			Status: portfoliopilotrpc.
+				QuoteRespStatus_INVALID_ASSET_RATES,
+		}, nil
+	}
+
+	// Extract constraints based on request type.
+	var (
+		minAmount    uint64
+		rateLimit    *portfoliopilotrpc.FixedPoint
+		rateBoundCmp int
+	)
+	switch r := accept.GetRequest().(type) {
+	case *portfoliopilotrpc.AcceptedQuote_BuyRequest:
+		br := r.BuyRequest
+		minAmount = br.GetAssetMinAmount()
+		rateLimit = br.GetAssetRateLimit()
+		rateBoundCmp = -1 // floor
+	case *portfoliopilotrpc.AcceptedQuote_SellRequest:
+		sr := r.SellRequest
+		minAmount = sr.GetPaymentMinAmount()
+		rateLimit = sr.GetAssetRateLimit()
+		rateBoundCmp = 1 // ceiling
+	default:
+		return nil, fmt.Errorf(
+			"unknown request type: %T", r,
+		)
+	}
+
+	// Check rate bound: buy requires accepted >= limit,
+	// sell requires accepted <= limit.
+	if rateLimit != nil {
+		limit, err := rpcutils.UnmarshalPortfolioFixedPoint(
+			rateLimit,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unmarshal rate limit: %w", err,
+			)
+		}
+		if acceptedRate.Cmp(*limit) == rateBoundCmp {
+			log.Printf("VerifyAcceptQuote: rate bound "+
+				"miss (accepted=%v limit=%v cmp=%d)",
+				acceptedRate, *limit, rateBoundCmp)
+			return &portfoliopilotrpc.
+				VerifyAcceptQuoteResponse{
+				Status: portfoliopilotrpc.
+					QuoteRespStatus_RATE_BOUND_MISS,
+			}, nil
+		}
+	}
+
+	// Check min fill is transportable at the accepted rate.
+	if minAmount > 0 && !amountIsTransportable(
+		minAmount, *acceptedRate, rateBoundCmp,
+	) {
+		log.Printf("VerifyAcceptQuote: min fill not met "+
+			"(min=%d)", minAmount)
+		return &portfoliopilotrpc.VerifyAcceptQuoteResponse{
+			Status: portfoliopilotrpc.
+				QuoteRespStatus_MIN_FILL_NOT_MET,
+		}, nil
+	}
+
+	// Check fill constraints: if a fill cap was negotiated,
+	// it must satisfy the minimum.
+	fillAmt := accept.GetAcceptedMaxAmount()
+	if fillAmt > 0 && minAmount > 0 && fillAmt < minAmount {
+		log.Printf("VerifyAcceptQuote: fill %d < min %d",
+			fillAmt, minAmount)
+		return &portfoliopilotrpc.VerifyAcceptQuoteResponse{
+			Status: portfoliopilotrpc.
+				QuoteRespStatus_MIN_FILL_NOT_MET,
+		}, nil
+	}
+
+	log.Printf("VerifyAcceptQuote: valid")
 	return &portfoliopilotrpc.VerifyAcceptQuoteResponse{
-		Status: portfoliopilotrpc.QuoteRespStatus_VALID_ACCEPT_QUOTE,
+		Status: portfoliopilotrpc.
+			QuoteRespStatus_VALID_ACCEPT_QUOTE,
 	}, nil
 }
 
