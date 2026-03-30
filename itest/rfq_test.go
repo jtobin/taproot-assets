@@ -842,6 +842,197 @@ func testRfqPortfolioPilotRpc(t *harnessTest) {
 		return resolveCalls > 0 && verifyCalls > 0 &&
 			queryCalls > 0
 	}, rfqTimeout, 50*time.Millisecond)
+
+	err = carolEventNtfns.CloseSend()
+	require.NoError(t.t, err)
+
+	// -----------------------------------------------------------------
+	// Sub-test: Buy order with fill cap.
+	//
+	// Set pilot fill amount to 3. Submit a buy order with
+	// AssetMaxAmt = 6. The accepted quote should report
+	// AcceptedMaxAmount = 3.
+	// -----------------------------------------------------------------
+	t.Log("Sub-test: buy order with fill cap")
+
+	pilot.SetFillAmount(3)
+
+	carolEvents2, err := ts.CarolTapd.SubscribeRfqEventNtfns(
+		ctx, &rfqrpc.SubscribeRfqEventNtfnsRequest{},
+	)
+	require.NoError(t.t, err)
+
+	buyReq2 := &rfqrpc.AddAssetBuyOrderRequest{
+		AssetSpecifier: &rfqrpc.AssetSpecifier{
+			Id: &rfqrpc.AssetSpecifier_AssetId{
+				AssetId: mintedAssetId,
+			},
+		},
+		AssetMaxAmt: 6,
+		Expiry:      buyOrderExpiry,
+		PeerPubKey:  ts.BobLnd.PubKey[:],
+		TimeoutSeconds: uint32(
+			rfqTimeout.Seconds(),
+		),
+		SkipAssetChannelCheck: true,
+	}
+	_, err = ts.CarolTapd.AddAssetBuyOrder(ctx, buyReq2)
+	require.NoError(t.t, err, "buy order with fill cap")
+
+	BeforeTimeout(t.t, func() {
+		event, err := carolEvents2.Recv()
+		require.NoError(t.t, err)
+
+		_, ok := event.Event.(*rfqrpc.RfqEvent_PeerAcceptedBuyQuote)
+		require.True(t.t, ok, "unexpected event: %v", event)
+	}, rfqTimeout)
+
+	acceptedQuotes, err := ts.CarolTapd.QueryPeerAcceptedQuotes(
+		ctx, &rfqrpc.QueryPeerAcceptedQuotesRequest{},
+	)
+	require.NoError(t.t, err)
+	require.NotEmpty(t.t, acceptedQuotes.BuyQuotes)
+
+	lastBuy := acceptedQuotes.BuyQuotes[len(
+		acceptedQuotes.BuyQuotes,
+	)-1]
+	require.Equal(
+		t.t, uint64(3), lastBuy.AcceptedMaxAmount,
+		"expected fill cap of 3",
+	)
+
+	err = carolEvents2.CloseSend()
+	require.NoError(t.t, err)
+
+	// -----------------------------------------------------------------
+	// Sub-test: Buy order without fill cap.
+	//
+	// Set pilot fill amount to 0 (no cap). The accepted quote
+	// should report AcceptedMaxAmount = 0.
+	// -----------------------------------------------------------------
+	t.Log("Sub-test: buy order without fill cap")
+
+	pilot.SetFillAmount(0)
+
+	carolEvents3, err := ts.CarolTapd.SubscribeRfqEventNtfns(
+		ctx, &rfqrpc.SubscribeRfqEventNtfnsRequest{},
+	)
+	require.NoError(t.t, err)
+
+	buyReq3 := &rfqrpc.AddAssetBuyOrderRequest{
+		AssetSpecifier: &rfqrpc.AssetSpecifier{
+			Id: &rfqrpc.AssetSpecifier_AssetId{
+				AssetId: mintedAssetId,
+			},
+		},
+		AssetMaxAmt: 6,
+		Expiry:      buyOrderExpiry,
+		PeerPubKey:  ts.BobLnd.PubKey[:],
+		TimeoutSeconds: uint32(
+			rfqTimeout.Seconds(),
+		),
+		SkipAssetChannelCheck: true,
+	}
+	_, err = ts.CarolTapd.AddAssetBuyOrder(ctx, buyReq3)
+	require.NoError(t.t, err, "buy order without fill cap")
+
+	BeforeTimeout(t.t, func() {
+		event, err := carolEvents3.Recv()
+		require.NoError(t.t, err)
+
+		_, ok := event.Event.(*rfqrpc.RfqEvent_PeerAcceptedBuyQuote)
+		require.True(t.t, ok, "unexpected event: %v", event)
+	}, rfqTimeout)
+
+	acceptedQuotes, err = ts.CarolTapd.QueryPeerAcceptedQuotes(
+		ctx, &rfqrpc.QueryPeerAcceptedQuotesRequest{},
+	)
+	require.NoError(t.t, err)
+	require.NotEmpty(t.t, acceptedQuotes.BuyQuotes)
+
+	lastBuy = acceptedQuotes.BuyQuotes[len(
+		acceptedQuotes.BuyQuotes,
+	)-1]
+	require.Equal(
+		t.t, uint64(0), lastBuy.AcceptedMaxAmount,
+		"expected no fill cap",
+	)
+
+	err = carolEvents3.CloseSend()
+	require.NoError(t.t, err)
+
+	// -----------------------------------------------------------------
+	// Sub-test: Sell order with fill cap.
+	//
+	// Register a buy offer on Bob so Alice can sell. Set pilot
+	// fill amount to 20000. Submit a sell order from Alice and
+	// verify AcceptedMaxAmount = 20000.
+	// -----------------------------------------------------------------
+	t.Log("Sub-test: sell order with fill cap")
+
+	_, err = ts.BobTapd.AddAssetBuyOffer(
+		ctx, &rfqrpc.AddAssetBuyOfferRequest{
+			AssetSpecifier: &rfqrpc.AssetSpecifier{
+				Id: &rfqrpc.AssetSpecifier_AssetId{
+					AssetId: mintedAssetId,
+				},
+			},
+			MaxUnits: 1000,
+		},
+	)
+	require.NoError(t.t, err)
+
+	pilot.SetFillAmount(20000)
+
+	aliceEvents, err := ts.AliceTapd.SubscribeRfqEventNtfns(
+		ctx, &rfqrpc.SubscribeRfqEventNtfnsRequest{},
+	)
+	require.NoError(t.t, err)
+
+	sellOrderExpiry := uint64(
+		time.Now().Add(24 * time.Hour).Unix(),
+	)
+	sellReq := &rfqrpc.AddAssetSellOrderRequest{
+		AssetSpecifier: &rfqrpc.AssetSpecifier{
+			Id: &rfqrpc.AssetSpecifier_AssetId{
+				AssetId: mintedAssetId,
+			},
+		},
+		PaymentMaxAmt: 42000,
+		Expiry:        sellOrderExpiry,
+		PeerPubKey:    ts.BobLnd.PubKey[:],
+		TimeoutSeconds: uint32(
+			rfqTimeout.Seconds(),
+		),
+		SkipAssetChannelCheck: true,
+	}
+	_, err = ts.AliceTapd.AddAssetSellOrder(ctx, sellReq)
+	require.NoError(t.t, err, "sell order with fill cap")
+
+	BeforeTimeout(t.t, func() {
+		event, err := aliceEvents.Recv()
+		require.NoError(t.t, err)
+
+		_, ok := event.Event.(*rfqrpc.RfqEvent_PeerAcceptedSellQuote)
+		require.True(t.t, ok, "unexpected event: %v", event)
+	}, rfqTimeout)
+
+	acceptedQuotes, err = ts.AliceTapd.QueryPeerAcceptedQuotes(
+		ctx, &rfqrpc.QueryPeerAcceptedQuotesRequest{},
+	)
+	require.NoError(t.t, err)
+	require.NotEmpty(t.t, acceptedQuotes.SellQuotes)
+
+	lastSell := acceptedQuotes.SellQuotes[len(
+		acceptedQuotes.SellQuotes,
+	)-1]
+	require.Equal(
+		t.t, uint64(20000), lastSell.AcceptedMaxAmount,
+		"expected fill cap of 20000",
+	)
+
+	err = aliceEvents.CloseSend()
+	require.NoError(t.t, err)
 }
 
 // testRfqLimitConstraints tests that RFQ negotiation correctly enforces
@@ -1239,6 +1430,78 @@ func testRfqLimitConstraints(t *harnessTest) {
 	}, rfqTimeout)
 
 	err = carolEvents3.CloseSend()
+	require.NoError(t.t, err)
+
+	// -----------------------------------------------------------------
+	// Sub-test 10: Sell FOK — rate cannot support full amount.
+	//
+	// hugeRate (1e12 units/BTC) is still active from sub-test 8.
+	// Alice sets FOK on PaymentMaxAmt = 1 msat.
+	// MilliSatoshiToUnits(1, 1e12) ≈ 0 asset units — FOK fails.
+	// -----------------------------------------------------------------
+	t.Log("Sub-test 10: sell FOK rejected")
+
+	sellReqFOKFail := &rfqrpc.AddAssetSellOrderRequest{
+		AssetSpecifier: &rfqrpc.AssetSpecifier{
+			Id: &rfqrpc.AssetSpecifier_AssetId{
+				AssetId: mintedAssetId,
+			},
+		},
+		PaymentMaxAmt:   1,
+		ExecutionPolicy: rfqrpc.ExecutionPolicy_EXECUTION_POLICY_FOK,
+		Expiry:          expiry,
+		PeerPubKey:      ts.BobLnd.PubKey[:],
+		TimeoutSeconds: uint32(
+			rfqTimeout.Seconds(),
+		),
+		SkipAssetChannelCheck: true,
+	}
+	_, err = ts.AliceTapd.AddAssetSellOrder(ctx, sellReqFOKFail)
+	require.ErrorContains(
+		t.t, err, "rejected quote",
+		"expected FOK rejection for sell order",
+	)
+
+	// -----------------------------------------------------------------
+	// Sub-test 11: Sell IOC — same extreme rate, no rejection.
+	//
+	// Same hugeRate but without FOK (default IOC). IOC doesn't
+	// enforce full-amount conversion, so the quote is accepted.
+	// -----------------------------------------------------------------
+	t.Log("Sub-test 11: sell IOC accepted with extreme rate")
+
+	aliceEvents3, err := ts.AliceTapd.SubscribeRfqEventNtfns(
+		ctx, &rfqrpc.SubscribeRfqEventNtfnsRequest{},
+	)
+	require.NoError(t.t, err)
+
+	sellReqIOC := &rfqrpc.AddAssetSellOrderRequest{
+		AssetSpecifier: &rfqrpc.AssetSpecifier{
+			Id: &rfqrpc.AssetSpecifier_AssetId{
+				AssetId: mintedAssetId,
+			},
+		},
+		PaymentMaxAmt: 1,
+		Expiry:        expiry,
+		PeerPubKey:    ts.BobLnd.PubKey[:],
+		TimeoutSeconds: uint32(
+			rfqTimeout.Seconds(),
+		),
+		SkipAssetChannelCheck: true,
+	}
+	_, err = ts.AliceTapd.AddAssetSellOrder(ctx, sellReqIOC)
+	require.NoError(t.t, err, "sell IOC should not reject")
+
+	BeforeTimeout(t.t, func() {
+		event, err := aliceEvents3.Recv()
+		require.NoError(t.t, err)
+
+		_, ok := event.Event.(*rfqrpc.RfqEvent_PeerAcceptedSellQuote)
+		require.True(t.t, ok, "expected PeerAcceptedSellQuote, "+
+			"got: %v", event)
+	}, rfqTimeout)
+
+	err = aliceEvents3.CloseSend()
 	require.NoError(t.t, err)
 }
 
