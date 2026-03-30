@@ -879,25 +879,33 @@ func testRfqPortfolioPilotRpc(t *harnessTest) {
 	_, err = ts.CarolTapd.AddAssetBuyOrder(ctx, buyReq2)
 	require.NoError(t.t, err, "buy order with fill cap")
 
+	var buyCapQuoteID []byte
 	BeforeTimeout(t.t, func() {
 		event, err := carolEvents2.Recv()
 		require.NoError(t.t, err)
 
-		_, ok := event.Event.(*rfqrpc.RfqEvent_PeerAcceptedBuyQuote)
+		e, ok := event.Event.(*rfqrpc.RfqEvent_PeerAcceptedBuyQuote)
 		require.True(t.t, ok, "unexpected event: %v", event)
+
+		buyCapQuoteID = e.PeerAcceptedBuyQuote.
+			PeerAcceptedBuyQuote.Id
 	}, rfqTimeout)
 
 	acceptedQuotes, err := ts.CarolTapd.QueryPeerAcceptedQuotes(
 		ctx, &rfqrpc.QueryPeerAcceptedQuotesRequest{},
 	)
 	require.NoError(t.t, err)
-	require.NotEmpty(t.t, acceptedQuotes.BuyQuotes)
 
-	lastBuy := acceptedQuotes.BuyQuotes[len(
-		acceptedQuotes.BuyQuotes,
-	)-1]
+	var matchedBuy *rfqrpc.PeerAcceptedBuyQuote
+	for _, q := range acceptedQuotes.BuyQuotes {
+		if bytes.Equal(q.Id, buyCapQuoteID) {
+			matchedBuy = q
+			break
+		}
+	}
+	require.NotNil(t.t, matchedBuy, "quote not found by ID")
 	require.Equal(
-		t.t, uint64(3), lastBuy.AcceptedMaxAmount,
+		t.t, uint64(3), matchedBuy.AcceptedMaxAmount,
 		"expected fill cap of 3",
 	)
 
@@ -936,25 +944,33 @@ func testRfqPortfolioPilotRpc(t *harnessTest) {
 	_, err = ts.CarolTapd.AddAssetBuyOrder(ctx, buyReq3)
 	require.NoError(t.t, err, "buy order without fill cap")
 
+	var buyNoCapQuoteID []byte
 	BeforeTimeout(t.t, func() {
 		event, err := carolEvents3.Recv()
 		require.NoError(t.t, err)
 
-		_, ok := event.Event.(*rfqrpc.RfqEvent_PeerAcceptedBuyQuote)
+		e, ok := event.Event.(*rfqrpc.RfqEvent_PeerAcceptedBuyQuote)
 		require.True(t.t, ok, "unexpected event: %v", event)
+
+		buyNoCapQuoteID = e.PeerAcceptedBuyQuote.
+			PeerAcceptedBuyQuote.Id
 	}, rfqTimeout)
 
 	acceptedQuotes, err = ts.CarolTapd.QueryPeerAcceptedQuotes(
 		ctx, &rfqrpc.QueryPeerAcceptedQuotesRequest{},
 	)
 	require.NoError(t.t, err)
-	require.NotEmpty(t.t, acceptedQuotes.BuyQuotes)
 
-	lastBuy = acceptedQuotes.BuyQuotes[len(
-		acceptedQuotes.BuyQuotes,
-	)-1]
+	var matchedBuyNoCap *rfqrpc.PeerAcceptedBuyQuote
+	for _, q := range acceptedQuotes.BuyQuotes {
+		if bytes.Equal(q.Id, buyNoCapQuoteID) {
+			matchedBuyNoCap = q
+			break
+		}
+	}
+	require.NotNil(t.t, matchedBuyNoCap, "quote not found by ID")
 	require.Equal(
-		t.t, uint64(0), lastBuy.AcceptedMaxAmount,
+		t.t, uint64(0), matchedBuyNoCap.AcceptedMaxAmount,
 		"expected no fill cap",
 	)
 
@@ -1009,25 +1025,33 @@ func testRfqPortfolioPilotRpc(t *harnessTest) {
 	_, err = ts.AliceTapd.AddAssetSellOrder(ctx, sellReq)
 	require.NoError(t.t, err, "sell order with fill cap")
 
+	var sellCapQuoteID []byte
 	BeforeTimeout(t.t, func() {
 		event, err := aliceEvents.Recv()
 		require.NoError(t.t, err)
 
-		_, ok := event.Event.(*rfqrpc.RfqEvent_PeerAcceptedSellQuote)
+		e, ok := event.Event.(*rfqrpc.RfqEvent_PeerAcceptedSellQuote)
 		require.True(t.t, ok, "unexpected event: %v", event)
+
+		sellCapQuoteID = e.PeerAcceptedSellQuote.
+			PeerAcceptedSellQuote.Id
 	}, rfqTimeout)
 
 	acceptedQuotes, err = ts.AliceTapd.QueryPeerAcceptedQuotes(
 		ctx, &rfqrpc.QueryPeerAcceptedQuotesRequest{},
 	)
 	require.NoError(t.t, err)
-	require.NotEmpty(t.t, acceptedQuotes.SellQuotes)
 
-	lastSell := acceptedQuotes.SellQuotes[len(
-		acceptedQuotes.SellQuotes,
-	)-1]
+	var matchedSell *rfqrpc.PeerAcceptedSellQuote
+	for _, q := range acceptedQuotes.SellQuotes {
+		if bytes.Equal(q.Id, sellCapQuoteID) {
+			matchedSell = q
+			break
+		}
+	}
+	require.NotNil(t.t, matchedSell, "quote not found by ID")
 	require.Equal(
-		t.t, uint64(20000), lastSell.AcceptedMaxAmount,
+		t.t, uint64(20000), matchedSell.AcceptedMaxAmount,
 		"expected fill cap of 20000",
 	)
 
@@ -1435,11 +1459,18 @@ func testRfqLimitConstraints(t *harnessTest) {
 	// -----------------------------------------------------------------
 	// Sub-test 10: Sell FOK — rate cannot support full amount.
 	//
-	// hugeRate (1e12 units/BTC) is still active from sub-test 8.
-	// Alice sets FOK on PaymentMaxAmt = 1 msat.
-	// MilliSatoshiToUnits(1, 1e12) ≈ 0 asset units — FOK fails.
+	// Set oracle to a tiny rate (1 unit/BTC). With
+	// PaymentMaxAmt = 1 msat, MilliSatoshiToUnits(1, 1) ≈ 0
+	// asset units — FOK viability check fails.
+	//
+	// Note: the hugeRate from sub-test 8 does NOT work here
+	// because sell-side converts msat→units (not units→msat),
+	// and 1 msat * 1e12 ≈ 10 units (non-zero).
 	// -----------------------------------------------------------------
 	t.Log("Sub-test 10: sell FOK rejected")
+
+	tinyRate := rfqmath.NewBigIntFixedPoint(1, 0)
+	oracle.SetPrice(specifier, tinyRate, tinyRate)
 
 	sellReqFOKFail := &rfqrpc.AddAssetSellOrderRequest{
 		AssetSpecifier: &rfqrpc.AssetSpecifier{
@@ -1463,12 +1494,12 @@ func testRfqLimitConstraints(t *harnessTest) {
 	)
 
 	// -----------------------------------------------------------------
-	// Sub-test 11: Sell IOC — same extreme rate, no rejection.
+	// Sub-test 11: Sell IOC — same tiny rate, no rejection.
 	//
-	// Same hugeRate but without FOK (default IOC). IOC doesn't
+	// Same tinyRate but without FOK (default IOC). IOC doesn't
 	// enforce full-amount conversion, so the quote is accepted.
 	// -----------------------------------------------------------------
-	t.Log("Sub-test 11: sell IOC accepted with extreme rate")
+	t.Log("Sub-test 11: sell IOC accepted with tiny rate")
 
 	aliceEvents3, err := ts.AliceTapd.SubscribeRfqEventNtfns(
 		ctx, &rfqrpc.SubscribeRfqEventNtfnsRequest{},
