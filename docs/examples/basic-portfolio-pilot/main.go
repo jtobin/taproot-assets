@@ -255,20 +255,28 @@ func (p *RpcPortfolioPilotServer) VerifyAcceptQuote(
 	// Extract constraints based on request type.
 	var (
 		minAmount    uint64
+		maxAmount    uint64
 		rateLimit    *portfoliopilotrpc.FixedPoint
 		rateBoundCmp int
+		isFOK        bool
 	)
 	switch r := accept.GetRequest().(type) {
 	case *portfoliopilotrpc.AcceptedQuote_BuyRequest:
 		br := r.BuyRequest
 		minAmount = br.GetAssetMinAmount()
+		maxAmount = br.GetAssetMaxAmount()
 		rateLimit = br.GetAssetRateLimit()
 		rateBoundCmp = -1 // floor
+		isFOK = br.GetExecutionPolicy() ==
+			portfoliopilotrpc.ExecutionPolicy_EXECUTION_POLICY_FOK
 	case *portfoliopilotrpc.AcceptedQuote_SellRequest:
 		sr := r.SellRequest
 		minAmount = sr.GetPaymentMinAmount()
+		maxAmount = sr.GetPaymentMaxAmount()
 		rateLimit = sr.GetAssetRateLimit()
 		rateBoundCmp = 1 // ceiling
+		isFOK = sr.GetExecutionPolicy() ==
+			portfoliopilotrpc.ExecutionPolicy_EXECUTION_POLICY_FOK
 	default:
 		return nil, fmt.Errorf(
 			"unknown request type: %T", r,
@@ -298,6 +306,29 @@ func (p *RpcPortfolioPilotServer) VerifyAcceptQuote(
 		}
 	}
 
+	// FOK: full max amount must be transportable.
+	if isFOK && !amountIsTransportable(
+		maxAmount, *acceptedRate, rateBoundCmp,
+	) {
+		log.Printf("VerifyAcceptQuote: FOK not viable "+
+			"(max=%d)", maxAmount)
+		return &portfoliopilotrpc.VerifyAcceptQuoteResponse{
+			Status: portfoliopilotrpc.
+				QuoteRespStatus_FOK_NOT_VIABLE,
+		}, nil
+	}
+
+	// FOK + fill cap: if cap < max, reject.
+	fillAmt := accept.GetAcceptedMaxAmount()
+	if isFOK && fillAmt > 0 && fillAmt < maxAmount {
+		log.Printf("VerifyAcceptQuote: FOK fill cap "+
+			"%d < max %d", fillAmt, maxAmount)
+		return &portfoliopilotrpc.VerifyAcceptQuoteResponse{
+			Status: portfoliopilotrpc.
+				QuoteRespStatus_FOK_NOT_VIABLE,
+		}, nil
+	}
+
 	// Check min fill is transportable at the accepted rate.
 	if minAmount > 0 && !amountIsTransportable(
 		minAmount, *acceptedRate, rateBoundCmp,
@@ -312,7 +343,6 @@ func (p *RpcPortfolioPilotServer) VerifyAcceptQuote(
 
 	// Check fill constraints: if a fill cap was negotiated,
 	// it must satisfy the minimum.
-	fillAmt := accept.GetAcceptedMaxAmount()
 	if fillAmt > 0 && minAmount > 0 && fillAmt < minAmount {
 		log.Printf("VerifyAcceptQuote: fill %d < min %d",
 			fillAmt, minAmount)
