@@ -1,6 +1,14 @@
-// This example demonstrates a basic RPC portfolio pilot server that implements
-// ResolveRequest, VerifyAcceptQuote, and QueryAssetRates. The server listens on
-// localhost:8096 and returns fixed asset rates for demonstration purposes.
+// This example demonstrates a basic RPC portfolio pilot server
+// that implements ResolveRequest, VerifyAcceptQuote, and
+// QueryAssetRates. The server returns fixed asset rates and
+// supports configurable fill caps via flags.
+//
+// Flags:
+//
+//	-listen  Listen address (default "localhost:8096").
+//	-rate    Rate coefficient in units/BTC (default 42000160000).
+//	-fillcap Optional fill cap returned as AcceptedMaxAmount
+//	         in ResolveRequest responses. 0 means no cap.
 package main
 
 import (
@@ -13,6 +21,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -33,13 +42,43 @@ import (
 )
 
 const (
-	// serviceListenAddress is the listening address of the service.
-	serviceListenAddress = "localhost:8096"
+	// defaultListenAddress is the default listening address.
+	defaultListenAddress = "localhost:8096"
 
-	// defaultRateCoefficient is the default rate coefficient used for the
-	// fixed asset rate. This is an arbitrary demo value, not a live price.
+	// defaultRateCoefficient is the default rate coefficient
+	// in units per BTC. This is an arbitrary demo value.
 	defaultRateCoefficient = 42_000_160_000
 )
+
+// pilotConfig holds the runtime configuration parsed from flags.
+type pilotConfig struct {
+	listenAddr      string
+	rateCoefficient uint64
+	fillCap         uint64
+}
+
+// parseFlags parses command-line flags into a pilotConfig.
+func parseFlags() pilotConfig {
+	cfg := pilotConfig{}
+
+	flag.StringVar(
+		&cfg.listenAddr, "listen",
+		defaultListenAddress, "listen address (host:port)",
+	)
+	flag.Uint64Var(
+		&cfg.rateCoefficient, "rate",
+		defaultRateCoefficient,
+		"rate coefficient in asset units per BTC",
+	)
+	flag.Uint64Var(
+		&cfg.fillCap, "fillcap", 0,
+		"fill cap (AcceptedMaxAmount); 0 = no cap",
+	)
+
+	flag.Parse()
+
+	return cfg
+}
 
 // setupLogger sets up the logger to write logs to both stdout and a file.
 func setupLogger() {
@@ -60,38 +99,44 @@ func setupLogger() {
 	log.SetFlags(log.LstdFlags)
 }
 
-// defaultAssetRate returns a fixed asset rate with a short expiry window.
-func defaultAssetRate() (rfqmsg.AssetRate, error) {
-	rate := rfqmath.NewBigIntFixedPoint(defaultRateCoefficient, 0)
+// makeAssetRate builds an asset rate from the given coefficient.
+func makeAssetRate(
+	coefficient uint64) (rfqmsg.AssetRate, error) {
+
+	rate := rfqmath.NewBigIntFixedPoint(coefficient, 0)
 	expiry := time.Now().Add(5 * time.Minute).UTC()
 
 	return rfqmsg.NewAssetRate(rate, expiry), nil
 }
 
-// defaultRpcAssetRate returns the fixed asset rate in RPC form.
-func defaultRpcAssetRate() (*portfoliopilotrpc.AssetRate, error) {
-	assetRate, err := defaultAssetRate()
+// makeRpcAssetRate returns the asset rate in RPC form.
+func makeRpcAssetRate(
+	coefficient uint64) (*portfoliopilotrpc.AssetRate, error) {
+
+	assetRate, err := makeAssetRate(coefficient)
 	if err != nil {
-		return nil, fmt.Errorf("create default asset rate: %w", err)
+		return nil, fmt.Errorf("create asset rate: %w", err)
 	}
 
 	rpcRate, err := rpcutils.MarshalPortfolioAssetRate(assetRate)
 	if err != nil {
-		return nil, fmt.Errorf("marshal default asset rate: %w", err)
+		return nil, fmt.Errorf("marshal asset rate: %w", err)
 	}
 
 	return rpcRate, nil
 }
 
-// RpcPortfolioPilotServer is a basic example RPC portfolio pilot server.
+// RpcPortfolioPilotServer is a basic example RPC portfolio pilot
+// server.
 type RpcPortfolioPilotServer struct {
-	// UnimplementedPortfolioPilotServer enables forward compatibility.
 	portfoliopilotrpc.UnimplementedPortfolioPilotServer
+
+	cfg pilotConfig
 }
 
-// ResolveRequest resolves an incoming quote request by returning either a
-// provided rate hint or a fixed default rate. This example always accepts
-// requests; real implementations should apply business-specific rules.
+// ResolveRequest resolves an incoming quote request by returning
+// either a provided rate hint or the configured rate. When a
+// fill cap is configured it is returned as AcceptedMaxAmount.
 func (p *RpcPortfolioPilotServer) ResolveRequest(_ context.Context,
 	req *portfoliopilotrpc.ResolveRequestRequest) (
 	*portfoliopilotrpc.ResolveRequestResponse, error) {
@@ -100,7 +145,6 @@ func (p *RpcPortfolioPilotServer) ResolveRequest(_ context.Context,
 		return nil, fmt.Errorf("resolve request is nil")
 	}
 
-	// If a rate hint was provided, accept it as-is.
 	var hint *portfoliopilotrpc.AssetRate
 	switch r := req.GetRequest().(type) {
 	case *portfoliopilotrpc.ResolveRequestRequest_BuyRequest:
@@ -121,28 +165,24 @@ func (p *RpcPortfolioPilotServer) ResolveRequest(_ context.Context,
 		return nil, fmt.Errorf("unknown request type: %T", r)
 	}
 
-	if hint != nil {
-		log.Print("ResolveRequest using provided rate hint")
-		acceptResult :=
-			&portfoliopilotrpc.ResolveRequestResponse_Accept{
-				Accept: hint,
-			}
-		return &portfoliopilotrpc.ResolveRequestResponse{
-			Result: acceptResult,
-		}, nil
+	if hint == nil {
+		var err error
+		hint, err = makeRpcAssetRate(p.cfg.rateCoefficient)
+		if err != nil {
+			return nil, fmt.Errorf("make asset rate: %w",
+				err)
+		}
 	}
 
-	rpcRate, err := defaultRpcAssetRate()
-	if err != nil {
-		return nil, fmt.Errorf("default rpc asset rate: %w", err)
-	}
+	log.Printf("ResolveRequest accepting (fillcap=%d)",
+		p.cfg.fillCap)
 
-	log.Print("ResolveRequest returning default rate")
-	acceptResult := &portfoliopilotrpc.ResolveRequestResponse_Accept{
-		Accept: rpcRate,
-	}
 	return &portfoliopilotrpc.ResolveRequestResponse{
-		Result: acceptResult,
+		Result: &portfoliopilotrpc.
+			ResolveRequestResponse_Accept{
+			Accept: hint,
+		},
+		AcceptedMaxAmount: p.cfg.fillCap,
 	}, nil
 }
 
@@ -164,9 +204,10 @@ func (p *RpcPortfolioPilotServer) VerifyAcceptQuote(_ context.Context,
 	}, nil
 }
 
-// QueryAssetRates returns an asset rate for the given query. It prefers a rate
-// hint if provided, otherwise it returns the fixed default rate.
-func (p *RpcPortfolioPilotServer) QueryAssetRates(_ context.Context,
+// QueryAssetRates returns the configured asset rate, or the
+// provided hint if one is given.
+func (p *RpcPortfolioPilotServer) QueryAssetRates(
+	_ context.Context,
 	req *portfoliopilotrpc.QueryAssetRatesRequest) (
 	*portfoliopilotrpc.QueryAssetRatesResponse, error) {
 
@@ -175,37 +216,44 @@ func (p *RpcPortfolioPilotServer) QueryAssetRates(_ context.Context,
 	}
 
 	if req.AssetRateHint != nil {
-		log.Print("QueryAssetRates using provided rate hint")
+		log.Print("QueryAssetRates using provided hint")
 		return &portfoliopilotrpc.QueryAssetRatesResponse{
 			AssetRate: req.AssetRateHint,
 		}, nil
 	}
 
-	rpcRate, err := defaultRpcAssetRate()
+	rpcRate, err := makeRpcAssetRate(p.cfg.rateCoefficient)
 	if err != nil {
-		return nil, fmt.Errorf("default rpc asset rate: %w", err)
+		return nil, fmt.Errorf("make asset rate: %w", err)
 	}
 
-	log.Print("QueryAssetRates returning default rate")
+	log.Print("QueryAssetRates returning configured rate")
 	return &portfoliopilotrpc.QueryAssetRatesResponse{
 		AssetRate: rpcRate,
 	}, nil
 }
 
-// startService starts the given RPC server and blocks until the server is
-// shut down.
-func startService(grpcServer *grpc.Server) error {
-	serviceAddr := fmt.Sprintf("portfoliopilotrpc://%s",
-		serviceListenAddress)
-	log.Printf("Starting RPC portfolio pilot service at address: %s",
-		serviceAddr)
+// startService starts the given RPC server and blocks until the
+// server is shut down.
+func startService(grpcServer *grpc.Server, cfg pilotConfig) error {
+	serviceAddr := fmt.Sprintf(
+		"portfoliopilotrpc://%s", cfg.listenAddr,
+	)
+	log.Printf("Starting portfolio pilot at %s "+
+		"(rate=%d, fillcap=%d)", serviceAddr,
+		cfg.rateCoefficient, cfg.fillCap)
 
-	server := RpcPortfolioPilotServer{}
-	portfoliopilotrpc.RegisterPortfolioPilotServer(grpcServer, &server)
-	grpcListener, err := net.Listen("tcp", serviceListenAddress)
+	server := &RpcPortfolioPilotServer{cfg: cfg}
+	portfoliopilotrpc.RegisterPortfolioPilotServer(
+		grpcServer, server,
+	)
+
+	grpcListener, err := net.Listen("tcp", cfg.listenAddr)
 	if err != nil {
-		return fmt.Errorf("RPC server unable to listen on %s: %w",
-			serviceListenAddress, err)
+		return fmt.Errorf(
+			"RPC server unable to listen on %s: %w",
+			cfg.listenAddr, err,
+		)
 	}
 	if err := grpcServer.Serve(grpcListener); err != nil {
 		if errors.Is(err, grpc.ErrServerStopped) {
@@ -273,57 +321,36 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 
 // main runs the example RPC portfolio pilot server.
 func main() {
+	cfg := parseFlags()
 	setupLogger()
 
-	// Generate a self-signed certificate. This allows us to use TLS for the
-	// gRPC server.
 	tlsCert, err := generateSelfSignedCert()
 	if err != nil {
-		log.Fatalf("Failed to generate TLS certificate: %v", err)
+		log.Fatalf("Failed to generate TLS cert: %v", err)
 	}
 
-	// Configure server-side keepalive parameters. These settings ensure the
-	// server actively probes client connection health and allows long-lived
-	// idle connections.
 	serverKeepalive := keepalive.ServerParameters{
-		// Ping clients after 1 minute of inactivity.
-		Time: time.Minute,
-
-		// Wait 20 seconds for ping response.
-		Timeout: 20 * time.Second,
-
-		// Allow connections to stay idle for 24 hours. The active
-		// pinging mechanism (via Time parameter) handles health
-		// checking, so we don't need aggressive idle timeouts.
-		MaxConnectionIdle: time.Hour * 24,
+		Time:              time.Minute,
+		Timeout:           20 * time.Second,
+		MaxConnectionIdle: 24 * time.Hour,
 	}
-
-	// Configure client keepalive enforcement policy. This tells the server
-	// how to handle client keepalive pings.
 	clientKeepalive := keepalive.EnforcementPolicy{
-		// Allow client to ping even when there are no active RPCs.
-		// This is critical for long-lived connections with infrequent
-		// requests.
 		PermitWithoutStream: true,
-
-		// Prevent abusive clients from pinging too frequently (DoS
-		// protection).
-		MinTime: 5 * time.Second,
+		MinTime:             5 * time.Second,
 	}
 
-	// Create the gRPC server with TLS and keepalive configuration.
-	transportCredentials := credentials.NewTLS(&tls.Config{
+	creds := credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 	})
 	backendService := grpc.NewServer(
-		grpc.Creds(transportCredentials),
+		grpc.Creds(creds),
 		grpc.KeepaliveParams(serverKeepalive),
 		grpc.KeepaliveEnforcementPolicy(clientKeepalive),
 	)
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- startService(backendService)
+		errChan <- startService(backendService, cfg)
 	}()
 
 	signalChan := make(chan os.Signal, 1)
@@ -337,10 +364,10 @@ func main() {
 		}
 
 	case sig := <-signalChan:
-		log.Printf("Shutting down service on signal: %v", sig)
+		log.Printf("Shutting down on signal: %v", sig)
 		backendService.GracefulStop()
 		if err = <-errChan; err != nil {
-			log.Printf("Service shutdown error: %v", err)
+			log.Printf("Shutdown error: %v", err)
 		}
 	}
 }
