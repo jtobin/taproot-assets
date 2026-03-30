@@ -290,21 +290,9 @@ func (p *InternalPortfolioPilot) ResolveRequest(ctx context.Context,
 
 	// Enforce the requester's constraints on the responder side
 	// to avoid wasted round-trips.
-	status := checkRateBound(request, resp.AssetRate.Rate)
-	if status != ValidAcceptQuoteRespStatus {
-		return NewRejectResolveResp(
-			rejectForStatus(status),
-		), nil
-	}
-
-	status = checkMinFill(request, resp.AssetRate.Rate)
-	if status != ValidAcceptQuoteRespStatus {
-		return NewRejectResolveResp(
-			rejectForStatus(status),
-		), nil
-	}
-
-	status = checkFOK(request, resp.AssetRate.Rate)
+	status := checkAllConstraints(
+		request, resp.AssetRate.Rate, fn.None[uint64](),
+	)
 	if status != ValidAcceptQuoteRespStatus {
 		return NewRejectResolveResp(
 			rejectForStatus(status),
@@ -401,29 +389,10 @@ func (p *InternalPortfolioPilot) VerifyAcceptQuote(ctx context.Context,
 		return InvalidAssetRatesQuoteRespStatus, nil
 	}
 
-	// Enforce the requester's rate bound constraint if set.
-	status := checkRateBound(req, counterRate.Rate)
-	if status != ValidAcceptQuoteRespStatus {
-		return status, nil
-	}
-
-	// Enforce the requester's min fill constraint if set.
-	status = checkMinFill(req, counterRate.Rate)
-	if status != ValidAcceptQuoteRespStatus {
-		return status, nil
-	}
-
-	// Enforce FOK execution policy if set.
-	status = checkFOK(req, counterRate.Rate)
-	if status != ValidAcceptQuoteRespStatus {
-		return status, nil
-	}
-
-	// Enforce that the negotiated fill amount (if present) is
-	// compatible with the requester's min-fill and FOK
-	// constraints.
-	status = checkFillConstraints(
-		req, accept.AcceptedFillAmount(),
+	// Enforce all limit-order constraints (rate bound, min fill,
+	// FOK, and fill-vs-constraint compatibility).
+	status := checkAllConstraints(
+		req, counterRate.Rate, accept.AcceptedFillAmount(),
 	)
 	if status != ValidAcceptQuoteRespStatus {
 		return status, nil
@@ -510,42 +479,62 @@ func (p *InternalPortfolioPilot) Close() error {
 	return nil
 }
 
-// checkRateBound verifies that the accepted rate satisfies the
-// requester's rate limit constraint. For a buy request, the accepted
-// rate must be >= the limit (buyer's floor). For a sell request, the
-// accepted rate must be <= the limit (seller's ceiling).
-func checkRateBound(req rfqmsg.Request,
-	acceptedRate rfqmath.BigIntFixedPoint) QuoteRespStatus {
+// checkAllConstraints runs every limit-order constraint check
+// against the given request, rate, and optional fill amount.
+// It returns the first non-valid status, or ValidAcceptQuoteRespStatus
+// if all checks pass.
+func checkAllConstraints(req rfqmsg.Request,
+	rate rfqmath.BigIntFixedPoint,
+	fill fn.Option[uint64]) QuoteRespStatus {
 
-	switch r := req.(type) {
-	case *rfqmsg.BuyRequest:
-		miss := fn.MapOptionZ(
-			r.AssetRateLimit,
-			func(limit rfqmath.BigIntFixedPoint) bool {
-				return acceptedRate.Cmp(limit) < 0
-			},
-		)
-		if miss {
-			return RateBoundMissQuoteRespStatus
+	for _, check := range []func() QuoteRespStatus{
+		func() QuoteRespStatus {
+			return checkRateBound(req, rate)
+		},
+		func() QuoteRespStatus {
+			return checkMinFill(req, rate)
+		},
+		func() QuoteRespStatus {
+			return checkFOK(req, rate)
+		},
+		func() QuoteRespStatus {
+			return checkFillConstraints(req, fill)
+		},
+	} {
+		if s := check(); s != ValidAcceptQuoteRespStatus {
+			return s
 		}
-
-	case *rfqmsg.SellRequest:
-		miss := fn.MapOptionZ(
-			r.AssetRateLimit,
-			func(limit rfqmath.BigIntFixedPoint) bool {
-				return acceptedRate.Cmp(limit) > 0
-			},
-		)
-		if miss {
-			return RateBoundMissQuoteRespStatus
-		}
-
-	default:
-		log.Warnf("checkRateBound: unhandled request type %T",
-			req)
 	}
 
 	return ValidAcceptQuoteRespStatus
+}
+
+// amountIsTransportable returns true if the given amount converts to
+// a non-zero result at the given rate. For buy requests (RateBoundCmp
+// == -1), the amount is in asset units and converts to msat. For sell
+// requests (RateBoundCmp == +1), the amount is in msat and converts
+// to asset units.
+func amountIsTransportable(amt uint64,
+	rate rfqmath.BigIntFixedPoint, rateBoundCmp int) bool {
+
+	if rateBoundCmp < 0 {
+		// Buy: asset units → msat.
+		units := rfqmath.FixedPoint[rfqmath.BigInt]{
+			Coefficient: rfqmath.NewBigIntFromUint64(
+				amt,
+			),
+			Scale: 0,
+		}
+		return rfqmath.UnitsToMilliSatoshi(units, rate) != 0
+	}
+
+	// Sell: msat → asset units.
+	units := rfqmath.MilliSatoshiToUnits(
+		lnwire.MilliSatoshi(amt), rate,
+	)
+	zero := rfqmath.NewBigIntFromUint64(0)
+
+	return !units.Coefficient.Equals(zero)
 }
 
 // isFOK returns true if the execution policy is Fill-Or-Kill.
@@ -555,98 +544,68 @@ func isFOK(p fn.Option[rfqmsg.ExecutionPolicy]) bool {
 	})
 }
 
+// checkRateBound verifies that the accepted rate satisfies the
+// requester's rate limit constraint. For a buy request the accepted
+// rate must be >= the limit (floor); for a sell request it must be
+// <= the limit (ceiling). The comparison direction is encoded in
+// RequestConstraints.RateBoundCmp.
+func checkRateBound(req rfqmsg.Request,
+	acceptedRate rfqmath.BigIntFixedPoint) QuoteRespStatus {
+
+	c := req.Constraints()
+	miss := fn.MapOptionZ(
+		c.RateLimit,
+		func(limit rfqmath.BigIntFixedPoint) bool {
+			// RateBoundCmp is -1 for buy (floor) and +1
+			// for sell (ceiling). A miss occurs when the
+			// accepted rate falls on the wrong side:
+			//   buy:  accepted < limit  → Cmp returns -1
+			//   sell: accepted > limit  → Cmp returns +1
+			return acceptedRate.Cmp(limit) == c.RateBoundCmp
+		},
+	)
+	if miss {
+		return RateBoundMissQuoteRespStatus
+	}
+
+	return ValidAcceptQuoteRespStatus
+}
+
 // checkFOK verifies that the full max amount is transportable at the
-// accepted rate when the execution policy is FOK. For a buy request,
-// the max asset amount must convert to non-zero msat. For a sell
-// request, the max payment amount must convert to non-zero asset units.
+// accepted rate when the execution policy is FOK.
 func checkFOK(req rfqmsg.Request,
 	acceptedRate rfqmath.BigIntFixedPoint) QuoteRespStatus {
 
-	switch r := req.(type) {
-	case *rfqmsg.BuyRequest:
-		if !isFOK(r.ExecutionPolicy) {
-			return ValidAcceptQuoteRespStatus
-		}
+	c := req.Constraints()
+	if !isFOK(c.ExecutionPolicy) {
+		return ValidAcceptQuoteRespStatus
+	}
 
-		units := rfqmath.FixedPoint[rfqmath.BigInt]{
-			Coefficient: rfqmath.NewBigIntFromUint64(
-				r.AssetMaxAmt,
-			),
-			Scale: 0,
-		}
-		msat := rfqmath.UnitsToMilliSatoshi(
-			units, acceptedRate,
-		)
-		if msat == 0 {
-			return FOKNotViableQuoteRespStatus
-		}
-
-	case *rfqmsg.SellRequest:
-		if !isFOK(r.ExecutionPolicy) {
-			return ValidAcceptQuoteRespStatus
-		}
-
-		units := rfqmath.MilliSatoshiToUnits(
-			r.PaymentMaxAmt, acceptedRate,
-		)
-		zero := rfqmath.NewBigIntFromUint64(0)
-		if units.Coefficient.Equals(zero) {
-			return FOKNotViableQuoteRespStatus
-		}
-
-	default:
-		log.Warnf("checkFOK: unhandled request type %T", req)
+	if !amountIsTransportable(
+		c.MaxAmount, acceptedRate, c.RateBoundCmp,
+	) {
+		return FOKNotViableQuoteRespStatus
 	}
 
 	return ValidAcceptQuoteRespStatus
 }
 
 // checkMinFill verifies that the requester's minimum fill amount is
-// transportable at the accepted rate. For a buy request, the min asset
-// amount must convert to a non-zero msat value. For a sell request,
-// the min payment amount must convert to non-zero asset units.
+// transportable at the accepted rate.
 func checkMinFill(req rfqmsg.Request,
 	acceptedRate rfqmath.BigIntFixedPoint) QuoteRespStatus {
 
-	switch r := req.(type) {
-	case *rfqmsg.BuyRequest:
-		notMet := fn.MapOptionZ(
-			r.AssetMinAmt,
-			func(minAmt uint64) bool {
-				units := rfqmath.FixedPoint[rfqmath.BigInt]{
-					Coefficient: rfqmath.NewBigIntFromUint64(
-						minAmt,
-					),
-					Scale: 0,
-				}
-				msat := rfqmath.UnitsToMilliSatoshi(
-					units, acceptedRate,
-				)
-				return msat == 0
-			},
-		)
-		if notMet {
-			return MinFillNotMetQuoteRespStatus
-		}
-
-	case *rfqmsg.SellRequest:
-		notMet := fn.MapOptionZ(
-			r.PaymentMinAmt,
-			func(minAmt lnwire.MilliSatoshi) bool {
-				units := rfqmath.MilliSatoshiToUnits(
-					minAmt, acceptedRate,
-				)
-				zero := rfqmath.NewBigIntFromUint64(0)
-				return units.Coefficient.Equals(zero)
-			},
-		)
-		if notMet {
-			return MinFillNotMetQuoteRespStatus
-		}
-
-	default:
-		log.Warnf("checkMinFill: unhandled request type %T",
-			req)
+	c := req.Constraints()
+	notMet := fn.MapOptionZ(
+		c.MinAmount,
+		func(minAmt uint64) bool {
+			return !amountIsTransportable(
+				minAmt, acceptedRate, c.RateBoundCmp,
+			)
+		},
+	)
+	if notMet {
+		return MinFillNotMetQuoteRespStatus
 	}
 
 	return ValidAcceptQuoteRespStatus
@@ -654,62 +613,33 @@ func checkMinFill(req rfqmsg.Request,
 
 // checkFillConstraints verifies that the negotiated fill amount (if
 // present) is compatible with the requester's min-fill and FOK
-// constraints. For a buy request the fill is in asset units; for a
-// sell request the fill is in msat.
+// constraints.
 func checkFillConstraints(req rfqmsg.Request,
 	fill fn.Option[uint64]) QuoteRespStatus {
 
 	if fill.IsNone() {
-		// No fill → full request max implied; nothing to check.
+		// No fill → full request max implied; nothing to
+		// check.
 		return ValidAcceptQuoteRespStatus
 	}
 
 	fillAmt := fill.UnwrapOr(0)
+	c := req.Constraints()
 
-	switch r := req.(type) {
-	case *rfqmsg.BuyRequest:
-		// Fill must be >= min fill when set.
-		tooSmall := fn.MapOptionZ(
-			r.AssetMinAmt,
-			func(minAmt uint64) bool {
-				return fillAmt < minAmt
-			},
-		)
-		if tooSmall {
-			return MinFillNotMetQuoteRespStatus
-		}
+	// Fill must be >= min fill when set.
+	tooSmall := fn.MapOptionZ(
+		c.MinAmount,
+		func(minAmt uint64) bool {
+			return fillAmt < minAmt
+		},
+	)
+	if tooSmall {
+		return MinFillNotMetQuoteRespStatus
+	}
 
-		// FOK requires the full max to be fillable.
-		if isFOK(r.ExecutionPolicy) &&
-			fillAmt < r.AssetMaxAmt {
-
-			return FOKNotViableQuoteRespStatus
-		}
-
-	case *rfqmsg.SellRequest:
-		fillMsat := lnwire.MilliSatoshi(fillAmt)
-
-		// Fill must be >= min fill when set.
-		tooSmall := fn.MapOptionZ(
-			r.PaymentMinAmt,
-			func(minAmt lnwire.MilliSatoshi) bool {
-				return fillMsat < minAmt
-			},
-		)
-		if tooSmall {
-			return MinFillNotMetQuoteRespStatus
-		}
-
-		// FOK requires the full max to be fillable.
-		if isFOK(r.ExecutionPolicy) &&
-			fillMsat < r.PaymentMaxAmt {
-
-			return FOKNotViableQuoteRespStatus
-		}
-
-	default:
-		log.Warnf("checkFillConstraints: unhandled "+
-			"request type %T", req)
+	// FOK requires the full max to be fillable.
+	if isFOK(c.ExecutionPolicy) && fillAmt < c.MaxAmount {
+		return FOKNotViableQuoteRespStatus
 	}
 
 	return ValidAcceptQuoteRespStatus
