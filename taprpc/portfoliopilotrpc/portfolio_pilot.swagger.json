@@ -229,9 +229,22 @@
         "asset_rate_limit": {
           "$ref": "#/definitions/portfoliopilotrpcFixedPoint",
           "description": "asset_rate_limit is an optional minimum acceptable rate (asset units\nper BTC)."
+        },
+        "execution_policy": {
+          "$ref": "#/definitions/portfoliopilotrpcExecutionPolicy",
+          "description": "execution_policy is the optional execution policy."
         }
       },
       "description": "BuyRequest represents a request to buy the subject asset."
+    },
+    "portfoliopilotrpcExecutionPolicy": {
+      "type": "string",
+      "enum": [
+        "EXECUTION_POLICY_IOC",
+        "EXECUTION_POLICY_FOK"
+      ],
+      "default": "EXECUTION_POLICY_IOC",
+      "description": "ExecutionPolicy specifies how a quote request should be filled.\n\n - EXECUTION_POLICY_IOC: EXECUTION_POLICY_IOC is Immediate-Or-Cancel: accept any\npartial fill. This is the default.\n - EXECUTION_POLICY_FOK: EXECUTION_POLICY_FOK is Fill-Or-Kill: the accepted rate\nmust support the full maximum amount."
     },
     "portfoliopilotrpcFixedPoint": {
       "type": "object",
@@ -425,6 +438,10 @@
         "asset_rate_limit": {
           "$ref": "#/definitions/portfoliopilotrpcFixedPoint",
           "description": "asset_rate_limit is an optional maximum acceptable rate (asset units\nper BTC)."
+        },
+        "execution_policy": {
+          "$ref": "#/definitions/portfoliopilotrpcExecutionPolicy",
+          "description": "execution_policy is the optional execution policy."
         }
       },
       "description": "SellRequest represents a request to sell the subject asset."

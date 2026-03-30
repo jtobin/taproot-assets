@@ -470,6 +470,9 @@ func rpcMarshalBuyRequest(
 		PeerId:              peer[:],
 		AssetMinAmount:      req.AssetMinAmt.UnwrapOr(0),
 		AssetRateLimit:      rpcRateLimit,
+		ExecutionPolicy: marshalExecutionPolicy(
+			req.ExecutionPolicy,
+		),
 	}, nil
 }
 
@@ -522,7 +525,28 @@ func rpcMarshalSellRequest(
 		PeerId:              peer[:],
 		PaymentMinAmount:    paymentMinAmt,
 		AssetRateLimit:      rpcRateLimit,
+		ExecutionPolicy: marshalExecutionPolicy(
+			req.ExecutionPolicy,
+		),
 	}, nil
+}
+
+// marshalExecutionPolicy converts an optional execution policy
+// to its portfolio pilot RPC enum.
+func marshalExecutionPolicy(
+	p fn.Option[rfqmsg.ExecutionPolicy]) pilotrpc.ExecutionPolicy {
+
+	return fn.MapOptionZ(
+		p,
+		func(ep rfqmsg.ExecutionPolicy) pilotrpc.ExecutionPolicy {
+			switch ep {
+			case rfqmsg.ExecutionPolicyFOK:
+				return pilotrpc.ExecutionPolicy_EXECUTION_POLICY_FOK
+			default:
+				return pilotrpc.ExecutionPolicy_EXECUTION_POLICY_IOC
+			}
+		},
+	)
 }
 
 // rpcMarshalPortfolioAssetSpecifier converts a specifier to its RPC form.
