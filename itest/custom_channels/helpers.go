@@ -214,6 +214,7 @@ type invoiceConfig struct {
 	groupKey   []byte
 	msats      lnwire.MilliSatoshi
 	routeHints []*lnrpc.RouteHint
+	rfqID      []byte
 }
 
 func defaultInvoiceConfig() *invoiceConfig {
@@ -245,6 +246,12 @@ func withMsatAmount(amt uint64) invoiceOpt {
 func withRouteHints(hints []*lnrpc.RouteHint) invoiceOpt {
 	return func(c *invoiceConfig) {
 		c.routeHints = hints
+	}
+}
+
+func withInvoiceRFQ(id []byte) invoiceOpt {
+	return func(c *invoiceConfig) {
+		c.rfqID = id
 	}
 }
 
@@ -1058,6 +1065,7 @@ func createAssetInvoice(t *testing.T, dstRfqPeer, dst *itest.IntegratedNode,
 	request := &tchrpc.AddInvoiceRequest{
 		AssetAmount: assetAmount,
 		PeerPubkey:  peerPubKey,
+		RfqId:       cfg.rfqID,
 		InvoiceRequest: &lnrpc.Invoice{
 			Memo: fmt.Sprintf("this is an asset invoice for "+
 				"%d units", assetAmount),

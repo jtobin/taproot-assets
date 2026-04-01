@@ -795,6 +795,14 @@ func (m *Manager) UpsertAssetSellOrder(ctx context.Context,
 	return m.negotiator.HandleOutgoingSellOrder(ctx, order)
 }
 
+// FetchBaseAlias resolves a virtual SCID alias to its base (real)
+// channel SCID.
+func (m *Manager) FetchBaseAlias(ctx context.Context,
+	alias lnwire.ShortChannelID) (lnwire.ShortChannelID, error) {
+
+	return m.cfg.AliasManager.FetchBaseAlias(ctx, alias)
+}
+
 // PeerAcceptedBuyQuotes returns buy quotes that were requested by our node and
 // have been accepted by our peers. These quotes are exclusively available to
 // our node for the acquisition of assets.

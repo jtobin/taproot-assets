@@ -251,6 +251,14 @@ message AddInvoiceRequest {
     // This field is optional and can be left empty if no metadata is available.
     // The maximum length of this field is 32'768 bytes.
     string price_oracle_metadata = 7;
+
+    // An optional RFQ ID from a previously accepted buy quote (e.g.
+    // from AddAssetBuyOrder). When set, AddInvoice skips quote
+    // negotiation and uses the referenced quote directly to build
+    // the invoice's route hints. The quote must exist in the
+    // accepted buy quotes store and must not be expired. Mutually
+    // exclusive with providing route hints in invoice_request.
+    bytes rfq_id = 8;
 }
 
 message AddInvoiceResponse {

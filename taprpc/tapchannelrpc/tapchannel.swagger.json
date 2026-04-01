@@ -1583,6 +1583,11 @@
         "price_oracle_metadata": {
           "type": "string",
           "description": "An optional text field that can be used to provide additional metadata\nabout the invoice to the price oracle. This can include information\nabout the wallet end user that initiated the transaction, or any\nauthentication information that the price oracle can use to give out a\nmore accurate (or discount) asset rate. Though not verified or enforced\nby tapd, the suggested format for this field is a JSON string.\nThis field is optional and can be left empty if no metadata is available.\nThe maximum length of this field is 32'768 bytes."
+        },
+        "rfq_id": {
+          "type": "string",
+          "format": "byte",
+          "description": "An optional RFQ ID from a previously accepted buy quote (e.g.\nfrom AddAssetBuyOrder). When set, AddInvoice skips quote\nnegotiation and uses the referenced quote directly to build\nthe invoice's route hints. The quote must exist in the\naccepted buy quotes store and must not be expired. Mutually\nexclusive with providing route hints in invoice_request."
         }
       }
     },

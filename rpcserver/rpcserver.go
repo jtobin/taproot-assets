@@ -9768,6 +9768,100 @@ func (r *RPCServer) AddInvoice(ctx context.Context,
 			err)
 	}
 
+	// If an rfq_id was provided, look up the accepted buy quote
+	// and build route hints from it, skipping fresh negotiation.
+	if len(req.RfqId) > 0 {
+		if iReq.RouteHints != nil {
+			return nil, fmt.Errorf("cannot set both " +
+				"rfq_id and route_hints")
+		}
+		if req.HodlInvoice != nil {
+			return nil, fmt.Errorf("rfq_id cannot be " +
+				"used with hodl invoices")
+		}
+		if len(req.RfqId) != 32 {
+			return nil, fmt.Errorf("rfq_id must be " +
+				"32 bytes")
+		}
+
+		var rfqID rfqmsg.ID
+		copy(rfqID[:], req.RfqId)
+
+		// Look up the accepted buy quote.
+		var quote *rfqmsg.BuyAccept
+		for _, q := range r.cfg.RfqManager.
+			PeerAcceptedBuyQuotes() {
+
+			if q.ID == rfqID {
+				qCopy := q
+				quote = &qCopy
+				break
+			}
+		}
+		if quote == nil {
+			return nil, fmt.Errorf("rfq_id did not " +
+				"match an accepted buy quote")
+		}
+
+		// Find the channel for this peer. The quote's
+		// virtual SCID was aliased to a real channel
+		// during acceptance; resolve it so we fetch the
+		// correct channel's fee policy.
+		peerChannels, ok := chanMap[quote.Peer]
+		if !ok || len(peerChannels) == 0 {
+			return nil, fmt.Errorf("no asset channel "+
+				"found for quote peer %x",
+				quote.Peer)
+		}
+
+		quoteScid := lnwire.NewShortChanIDFromInt(
+			uint64(quote.ID.Scid()),
+		)
+		baseSCID, err := r.cfg.RfqManager.FetchBaseAlias(
+			ctx, quoteScid,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error resolving "+
+				"alias for quote SCID %v: %w",
+				quoteScid, err)
+		}
+
+		var channel *rfq.TapChannel
+		for i := range peerChannels {
+			c := &peerChannels[i]
+			if c.ChannelInfo.ChannelID == baseSCID.ToUint64() {
+				channel = c
+				break
+			}
+		}
+		if channel == nil {
+			return nil, fmt.Errorf("no channel with "+
+				"base SCID %v found for quote "+
+				"peer %x", baseSCID, quote.Peer)
+		}
+
+		// Build route hint from the quote.
+		rpcQuote := rfq.MarshalAcceptedBuyQuote(
+			*quote,
+		)
+		hopHint, err := r.cfg.RfqManager.RfqToHopHint(
+			ctx, r.getInboundPolicy,
+			channel.ChannelInfo.ChannelID,
+			channel.ChannelInfo.PubKeyBytes,
+			rpcQuote, false,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		lnrpcHop := rfq.Zpay32HopHintToLnrpc(hopHint)
+		iReq.RouteHints = []*lnrpc.RouteHint{{
+			HopHints: []*lnrpc.HopHint{lnrpcHop},
+		}}
+
+		existingQuotes = true
+	}
+
 	expirySeconds := iReq.Expiry
 	if expirySeconds == 0 {
 		expirySeconds = int64(rfq.DefaultInvoiceExpiry.Seconds())

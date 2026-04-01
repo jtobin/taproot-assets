@@ -19,6 +19,7 @@ import (
 	"github.com/lightninglabs/taproot-assets/taprpc/mintrpc"
 	oraclerpc "github.com/lightninglabs/taproot-assets/taprpc/priceoraclerpc"
 	"github.com/lightninglabs/taproot-assets/taprpc/rfqrpc"
+	tchrpc "github.com/lightninglabs/taproot-assets/taprpc/tapchannelrpc"
 	"github.com/lightningnetwork/lnd/chainreg"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
@@ -324,6 +325,281 @@ func testRfqAssetBuyHtlcIntercept(t *harnessTest) {
 		// accepted quote.
 		require.Equal(
 			t.t, acceptedQuote.Scid, acceptHtlc.AcceptHtlc.Scid,
+		)
+		t.Log("Bob has accepted the HTLC")
+	}, rfqTimeout)
+
+	// Close event streams.
+	err = carolEventNtfns.CloseSend()
+	require.NoError(t.t, err)
+
+	err = bobEventNtfns.CloseSend()
+	require.NoError(t.t, err)
+}
+
+// testRfqAssetBuyInvoiceRfqId tests that AddInvoice accepts an rfq_id
+// from a previously negotiated buy quote, skipping fresh negotiation.
+// The flow is: AddAssetBuyOrder -> accepted quote -> AddInvoice(rfq_id)
+// -> Alice pays -> Bob intercepts and validates HTLC.
+func testRfqAssetBuyInvoiceRfqId(t *harnessTest) {
+	// Set up oracle harness.
+	oracleAddr := fmt.Sprintf(
+		"127.0.0.1:%d", port.NextAvailablePort(),
+	)
+	oracle := NewOracleHarness(oracleAddr)
+	oracle.Start(t.t)
+	t.t.Cleanup(oracle.Stop)
+
+	oracleURL := fmt.Sprintf("rfqrpc://%s", oracleAddr)
+
+	// Initialize a new test scenario.
+	ts := newRfqTestScenario(t, WithRfqOracleServer(oracleURL))
+
+	// Mint an asset with Bob's tapd node.
+	rpcAssets := MintAssetsConfirmBatch(
+		t.t, t.lndHarness.Miner().Client, ts.BobTapd,
+		[]*mintrpc.MintAssetRequest{issuableAssets[0]},
+	)
+	mintedAssetId := rpcAssets[0].AssetGenesis.AssetId
+
+	ctx := context.Background()
+
+	// Upsert an asset sell offer to Bob's tapd node.
+	_, err := ts.BobTapd.AddAssetSellOffer(
+		ctx, &rfqrpc.AddAssetSellOfferRequest{
+			AssetSpecifier: &rfqrpc.AssetSpecifier{
+				Id: &rfqrpc.AssetSpecifier_AssetId{
+					AssetId: mintedAssetId,
+				},
+			},
+			MaxUnits: 1000,
+		},
+	)
+	require.NoError(t.t, err, "unable to upsert asset sell offer")
+
+	// Subscribe to Carol's RFQ events stream.
+	carolEventNtfns, err := ts.CarolTapd.SubscribeRfqEventNtfns(
+		ctx, &rfqrpc.SubscribeRfqEventNtfnsRequest{},
+	)
+	require.NoError(t.t, err)
+
+	// Carol sends a buy order to Bob.
+	purchaseAssetAmt := uint64(6)
+	buyOrderExpiry := uint64(
+		time.Now().Add(24 * time.Hour).Unix(),
+	)
+
+	buyReq := &rfqrpc.AddAssetBuyOrderRequest{
+		AssetSpecifier: &rfqrpc.AssetSpecifier{
+			Id: &rfqrpc.AssetSpecifier_AssetId{
+				AssetId: mintedAssetId,
+			},
+		},
+		AssetMaxAmt:           purchaseAssetAmt,
+		Expiry:                buyOrderExpiry,
+		PeerPubKey:            ts.BobLnd.PubKey[:],
+		TimeoutSeconds:        uint32(rfqTimeout.Seconds()),
+		SkipAssetChannelCheck: true,
+		PriceOracleMetadata:   "buy-order-rfqid",
+	}
+
+	// Set up expected oracle calls.
+	buySpecifier := &oraclerpc.AssetSpecifier{
+		Id: &oraclerpc.AssetSpecifier_AssetId{
+			AssetId: mintedAssetId,
+		},
+	}
+	btcSpecifier := &oraclerpc.AssetSpecifier{
+		Id: &oraclerpc.AssetSpecifier_AssetId{
+			AssetId: bytes.Repeat([]byte{0}, 32),
+		},
+	}
+	mockResult := &oraclerpc.QueryAssetRatesResponse{
+		Result: &oraclerpc.QueryAssetRatesResponse_Ok{
+			Ok: &oraclerpc.QueryAssetRatesOkResponse{
+				AssetRates: &oraclerpc.AssetRates{
+					SubjectAssetRate: &oraclerpc.FixedPoint{
+						Coefficient: "1000000",
+						Scale:       3,
+					},
+					ExpiryTimestamp: uint64(
+						time.Now().Add(
+							time.Minute,
+						).Unix(),
+					),
+				},
+			},
+		},
+	}
+
+	carolPubkey := ts.CarolLnd.PubKey[:]
+	bobPubkey := ts.BobLnd.PubKey[:]
+
+	// Rate hint call (Carol).
+	oracle.On(
+		"QueryAssetRates",
+		oraclerpc.TransactionType_PURCHASE,
+		buySpecifier, purchaseAssetAmt, btcSpecifier,
+		mock.Anything, mock.Anything,
+		oraclerpc.Intent_INTENT_RECV_PAYMENT_HINT,
+		mock.Anything, "buy-order-rfqid", carolPubkey,
+	).Return(mockResult, nil).Once()
+
+	// Sale call (Bob).
+	oracle.On(
+		"QueryAssetRates",
+		oraclerpc.TransactionType_SALE,
+		buySpecifier, purchaseAssetAmt, btcSpecifier,
+		mock.Anything, mock.Anything,
+		oraclerpc.Intent_INTENT_RECV_PAYMENT,
+		mock.Anything, "buy-order-rfqid", bobPubkey,
+	).Return(mockResult, nil).Once()
+
+	// Qualification call (Carol).
+	oracle.On(
+		"QueryAssetRates",
+		oraclerpc.TransactionType_PURCHASE,
+		buySpecifier, purchaseAssetAmt, btcSpecifier,
+		mock.Anything, mock.Anything,
+		oraclerpc.Intent_INTENT_RECV_PAYMENT_QUALIFY,
+		mock.Anything, "buy-order-rfqid", carolPubkey,
+	).Return(mockResult, nil).Once()
+
+	defer func() {
+		oracle.AssertExpectations(t.t)
+	}()
+
+	_, err = ts.CarolTapd.AddAssetBuyOrder(ctx, buyReq)
+	require.NoError(t.t, err, "unable to add asset buy order")
+
+	// Wait for Carol to receive the accepted buy quote.
+	BeforeTimeout(t.t, func() {
+		event, err := carolEventNtfns.Recv()
+		require.NoError(t.t, err)
+
+		_, ok := event.Event.(*rfqrpc.RfqEvent_PeerAcceptedBuyQuote)
+		require.True(t.t, ok, "unexpected event: %v", event)
+	}, rfqTimeout)
+
+	// Fetch the accepted quote.
+	acceptedQuotes, err := ts.CarolTapd.QueryPeerAcceptedQuotes(
+		ctx, &rfqrpc.QueryPeerAcceptedQuotesRequest{},
+	)
+	require.NoError(t.t, err, "unable to query accepted quotes")
+	require.Len(t.t, acceptedQuotes.BuyQuotes, 1)
+
+	acceptedQuote := acceptedQuotes.BuyQuotes[0]
+	rfqID := acceptedQuote.Id
+
+	// --- Negative tests ---
+
+	// Wrong length rfq_id.
+	_, err = ts.CarolTapd.AddInvoice(
+		ctx, &tchrpc.AddInvoiceRequest{
+			AssetId:        mintedAssetId,
+			AssetAmount:    purchaseAssetAmt,
+			RfqId:          []byte{0x01, 0x02},
+			InvoiceRequest: &lnrpc.Invoice{},
+		},
+	)
+	require.ErrorContains(t.t, err, "32 bytes")
+
+	// rfq_id + route_hints is mutually exclusive.
+	_, err = ts.CarolTapd.AddInvoice(
+		ctx, &tchrpc.AddInvoiceRequest{
+			AssetId:     mintedAssetId,
+			AssetAmount: purchaseAssetAmt,
+			RfqId:       rfqID,
+			InvoiceRequest: &lnrpc.Invoice{
+				RouteHints: []*lnrpc.RouteHint{{
+					HopHints: []*lnrpc.HopHint{{
+						NodeId: ts.BobLnd.PubKeyStr,
+						ChanId: 12345,
+					}},
+				}},
+			},
+		},
+	)
+	require.ErrorContains(t.t, err, "cannot set both")
+
+	// rfq_id + hodl_invoice is not supported.
+	_, err = ts.CarolTapd.AddInvoice(
+		ctx, &tchrpc.AddInvoiceRequest{
+			AssetId:        mintedAssetId,
+			AssetAmount:    purchaseAssetAmt,
+			RfqId:          rfqID,
+			InvoiceRequest: &lnrpc.Invoice{},
+			HodlInvoice: &tchrpc.HodlInvoice{
+				PaymentHash: make([]byte, 32),
+			},
+		},
+	)
+	require.ErrorContains(t.t, err, "hodl invoices")
+
+	// Bogus rfq_id that doesn't match any quote.
+	bogusID := make([]byte, 32)
+	_, err = ts.CarolTapd.AddInvoice(
+		ctx, &tchrpc.AddInvoiceRequest{
+			AssetId:        mintedAssetId,
+			AssetAmount:    purchaseAssetAmt,
+			RfqId:          bogusID,
+			InvoiceRequest: &lnrpc.Invoice{},
+		},
+	)
+	require.ErrorContains(t.t, err, "did not match")
+
+	// --- Positive test: AddInvoice with rfq_id ---
+
+	timeoutSeconds := int64(60)
+	invoiceResp, err := ts.CarolTapd.AddInvoice(
+		ctx, &tchrpc.AddInvoiceRequest{
+			AssetId:     mintedAssetId,
+			AssetAmount: purchaseAssetAmt,
+			RfqId:       rfqID,
+			InvoiceRequest: &lnrpc.Invoice{
+				Expiry: timeoutSeconds,
+			},
+		},
+	)
+	require.NoError(t.t, err)
+
+	// Verify the returned quote matches.
+	require.Equal(
+		t.t, acceptedQuote.Scid,
+		invoiceResp.AcceptedBuyQuote.Scid,
+	)
+
+	// Subscribe to Bob's RFQ events for HTLC validation.
+	bobEventNtfns, err := ts.BobTapd.SubscribeRfqEventNtfns(
+		ctx, &rfqrpc.SubscribeRfqEventNtfnsRequest{},
+	)
+	require.NoError(t.t, err)
+
+	// Alice pays the invoice.
+	t.Log("Alice paying invoice")
+	payReq := &routerrpc.SendPaymentRequest{
+		PaymentRequest: invoiceResp.InvoiceResult.PaymentRequest,
+		TimeoutSeconds: int32(wait.PaymentTimeout.Seconds()),
+		FeeLimitMsat:   math.MaxInt64,
+	}
+	ts.AliceLnd.RPC.SendPayment(payReq)
+	t.Log("Alice payment sent")
+
+	// Wait for Bob to intercept and accept the HTLC.
+	BeforeTimeout(t.t, func() {
+		t.Log("Waiting for Bob to receive HTLC")
+
+		event, err := bobEventNtfns.Recv()
+		require.NoError(t.t, err)
+
+		acceptHtlc, ok := event.Event.(*rfqrpc.RfqEvent_AcceptHtlc)
+		require.True(
+			t.t, ok, "unexpected event type: %v", event,
+		)
+
+		require.Equal(
+			t.t, acceptedQuote.Scid,
+			acceptHtlc.AcceptHtlc.Scid,
 		)
 		t.Log("Bob has accepted the HTLC")
 	}, rfqTimeout)

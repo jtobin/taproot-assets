@@ -372,6 +372,10 @@ var allTestCases = []*testCase{
 		test: testRfqAssetBuyHtlcIntercept,
 	},
 	{
+		name: "rfq asset buy invoice rfq id",
+		test: testRfqAssetBuyInvoiceRfqId,
+	},
+	{
 		name: "rfq asset sell htlc intercept",
 		test: testRfqAssetSellHtlcIntercept,
 	},
