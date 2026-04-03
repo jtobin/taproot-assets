@@ -1,13 +1,15 @@
 // This example demonstrates a basic RPC portfolio pilot server
 // that implements ResolveRequest, VerifyAcceptQuote, and
-// QueryAssetRates. The server returns fixed asset rates,
+// QueryAssetRates. The server returns asset rates fetched
+// live from CoinGecko (or a static rate if configured),
 // supports configurable fill caps, and enforces rate bound,
 // min fill, and fill constraint checks on accepted quotes.
 //
 // Flags:
 //
 //	-listen  Listen address (default "localhost:8096").
-//	-rate    Rate coefficient in units/BTC (default 42000160000).
+//	-rate    Rate coefficient in units/BTC. 0 (default)
+//	         fetches live from CoinGecko.
 //	-fillcap Optional fill cap returned as AcceptedMaxAmount
 //	         in ResolveRequest responses. 0 means no cap.
 package main
@@ -20,6 +22,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -28,8 +31,10 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -68,9 +73,9 @@ func parseFlags() pilotConfig {
 		defaultListenAddress, "listen address (host:port)",
 	)
 	flag.Uint64Var(
-		&cfg.rateCoefficient, "rate",
-		defaultRateCoefficient,
-		"rate coefficient in asset units per BTC",
+		&cfg.rateCoefficient, "rate", 0,
+		"rate coefficient in asset units per BTC "+
+			"(0 = fetch live from CoinGecko)",
 	)
 	flag.Uint64Var(
 		&cfg.fillCap, "fillcap", 0,
@@ -80,6 +85,109 @@ func parseFlags() pilotConfig {
 	flag.Parse()
 
 	return cfg
+}
+
+// coingeckoURL is the CoinGecko simple-price endpoint.
+const coingeckoURL = "https://api.coingecko.com/api/v3" +
+	"/simple/price?ids=bitcoin&vs_currencies=usd"
+
+// fetchBTCPrice fetches the current BTC/USD price from
+// CoinGecko and returns the rate coefficient (price * 100,
+// since 1 USDX = 1 cent).
+func fetchBTCPrice() (uint64, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	resp, err := client.Get(coingeckoURL)
+	if err != nil {
+		return 0, fmt.Errorf("coingecko request: %w",
+			err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf(
+			"coingecko status: %d", resp.StatusCode,
+		)
+	}
+
+	var result struct {
+		Bitcoin struct {
+			USD float64 `json:"usd"`
+		} `json:"bitcoin"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(
+		&result,
+	); err != nil {
+		return 0, fmt.Errorf("decode response: %w", err)
+	}
+
+	if result.Bitcoin.USD <= 0 {
+		return 0, fmt.Errorf("invalid price: %f",
+			result.Bitcoin.USD)
+	}
+
+	// Price in dollars → coefficient in cents.
+	coefficient := uint64(result.Bitcoin.USD * 100)
+
+	return coefficient, nil
+}
+
+// rateCache caches the live BTC/USD rate coefficient,
+// refreshing from CoinGecko when the TTL expires.
+type rateCache struct {
+	mu        sync.Mutex
+	rate      uint64
+	fetchedAt time.Time
+	ttl       time.Duration
+	fallback  uint64
+}
+
+// newRateCache creates a rate cache. If fallback is 0 the
+// default demo coefficient is used.
+func newRateCache(
+	ttl time.Duration, fallback uint64) *rateCache {
+
+	if fallback == 0 {
+		fallback = defaultRateCoefficient
+	}
+
+	return &rateCache{
+		ttl:      ttl,
+		fallback: fallback,
+	}
+}
+
+// getRate returns a fresh rate coefficient (cents/BTC).
+func (c *rateCache) getRate() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.fetchedAt.IsZero() &&
+		time.Since(c.fetchedAt) < c.ttl {
+		return c.rate
+	}
+
+	price, err := fetchBTCPrice()
+	if err != nil {
+		log.Printf("CoinGecko fetch error: %v", err)
+
+		if c.rate != 0 {
+			log.Printf("Using stale rate: %d",
+				c.rate)
+			return c.rate
+		}
+
+		log.Printf("Using fallback rate: %d",
+			c.fallback)
+		return c.fallback
+	}
+
+	c.rate = price
+	c.fetchedAt = time.Now()
+	log.Printf("Fetched live rate: %d (≈$%d/BTC)",
+		price, price/100)
+
+	return c.rate
 }
 
 // setupLogger sets up the logger to write logs to both stdout and a file.
@@ -133,7 +241,8 @@ func makeRpcAssetRate(
 type RpcPortfolioPilotServer struct {
 	portfoliopilotrpc.UnimplementedPortfolioPilotServer
 
-	cfg pilotConfig
+	cfg   pilotConfig
+	cache *rateCache
 }
 
 // ResolveRequest resolves an incoming quote request by returning
@@ -168,8 +277,13 @@ func (p *RpcPortfolioPilotServer) ResolveRequest(_ context.Context,
 	}
 
 	if hint == nil {
+		coeff := p.cfg.rateCoefficient
+		if p.cache != nil {
+			coeff = p.cache.getRate()
+		}
+
 		var err error
-		hint, err = makeRpcAssetRate(p.cfg.rateCoefficient)
+		hint, err = makeRpcAssetRate(coeff)
 		if err != nil {
 			return nil, fmt.Errorf("make asset rate: %w",
 				err)
@@ -377,7 +491,12 @@ func (p *RpcPortfolioPilotServer) QueryAssetRates(
 		}, nil
 	}
 
-	rpcRate, err := makeRpcAssetRate(p.cfg.rateCoefficient)
+	coeff := p.cfg.rateCoefficient
+	if p.cache != nil {
+		coeff = p.cache.getRate()
+	}
+
+	rpcRate, err := makeRpcAssetRate(coeff)
 	if err != nil {
 		return nil, fmt.Errorf("make asset rate: %w", err)
 	}
@@ -394,11 +513,26 @@ func startService(grpcServer *grpc.Server, cfg pilotConfig) error {
 	serviceAddr := fmt.Sprintf(
 		"portfoliopilotrpc://%s", cfg.listenAddr,
 	)
-	log.Printf("Starting portfolio pilot at %s "+
-		"(rate=%d, fillcap=%d)", serviceAddr,
-		cfg.rateCoefficient, cfg.fillCap)
 
-	server := &RpcPortfolioPilotServer{cfg: cfg}
+	var cache *rateCache
+	if cfg.rateCoefficient == 0 {
+		cache = newRateCache(
+			30*time.Second, 0,
+		)
+		log.Printf("Starting portfolio pilot at "+
+			"%s (rate=live, fillcap=%d)",
+			serviceAddr, cfg.fillCap)
+	} else {
+		log.Printf("Starting portfolio pilot at "+
+			"%s (rate=%d, fillcap=%d)",
+			serviceAddr,
+			cfg.rateCoefficient, cfg.fillCap)
+	}
+
+	server := &RpcPortfolioPilotServer{
+		cfg:   cfg,
+		cache: cache,
+	}
 	portfoliopilotrpc.RegisterPortfolioPilotServer(
 		grpcServer, server,
 	)

@@ -10,6 +10,8 @@ RUN go build -o /go/bin/portfolio-pilot \
 
 FROM alpine:3.22
 
+RUN apk add --no-cache ca-certificates
+
 COPY --from=builder /go/bin/portfolio-pilot /bin/
 
 ENTRYPOINT ["portfolio-pilot"]
