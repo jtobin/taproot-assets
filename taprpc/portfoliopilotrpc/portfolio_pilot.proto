@@ -146,6 +146,10 @@ enum QuoteRespStatus {
     // RATE_BOUND_MISS indicates that the accepted rate violated the
     // requester's rate limit constraint.
     RATE_BOUND_MISS = 6;
+
+    // FOK_NOT_VIABLE indicates that the FOK execution policy could
+    // not be satisfied at the accepted rate.
+    FOK_NOT_VIABLE = 7;
 }
 
 // RejectErr captures a rejection reason for a quote request.

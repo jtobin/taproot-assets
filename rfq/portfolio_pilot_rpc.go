@@ -608,6 +608,8 @@ func rpcUnmarshalQuoteRespStatus(
 		return MinFillNotMetQuoteRespStatus, nil
 	case pilotrpc.QuoteRespStatus_RATE_BOUND_MISS:
 		return RateBoundMissQuoteRespStatus, nil
+	case pilotrpc.QuoteRespStatus_FOK_NOT_VIABLE:
+		return FOKNotViableQuoteRespStatus, nil
 	default:
 		return 0, fmt.Errorf("unknown quote response status: %v",
 			status)
