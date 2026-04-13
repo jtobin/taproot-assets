@@ -192,8 +192,13 @@ type AssetSalePolicy struct {
 	peer route.Vertex
 
 	// ExecutionPolicy is the execution policy from the original
-	// request (annotation only; not enforced at the HTLC level).
+	// request.
 	ExecutionPolicy fn.Option[rfqmsg.ExecutionPolicy]
+
+	// MinOutboundAssetAmount is the minimum asset amount that
+	// each HTLC must carry. Derived from the negotiated fill
+	// quantity or FOK execution policy.
+	MinOutboundAssetAmount uint64
 
 	// expiry is the policy's expiry unix timestamp after which the policy
 	// is no longer valid.
@@ -213,10 +218,22 @@ func NewAssetSalePolicy(quote rfqmsg.BuyAccept, noop bool,
 		}
 	})
 
+	// Derive the floor from fill quantity and/or FOK policy.
+	// When fill is present, maxAmt is already
+	// min(fill, requestMax), so the floor equals maxAmt.
+	var minAmt uint64
+	quote.AcceptedMaxAmount.WhenSome(func(_ uint64) {
+		minAmt = maxAmt
+	})
+	if minAmt == 0 && isFOK(quote.Request.ExecutionPolicy) {
+		minAmt = maxAmt
+	}
+
 	return &AssetSalePolicy{
 		AssetSpecifier:         quote.Request.AssetSpecifier,
 		AcceptedQuoteId:        quote.ID,
 		MaxOutboundAssetAmount: maxAmt,
+		MinOutboundAssetAmount: minAmt,
 		AskAssetRate:           quote.AssetRate.Rate,
 		expiry:                 uint64(quote.AssetRate.Expiry.Unix()),
 		htlcToAmt:              htlcToAmtMap,
@@ -274,6 +291,35 @@ func (c *AssetSalePolicy) CheckHtlcCompliance(_ context.Context,
 		return fmt.Errorf("HTLC out amount is greater than the policy "+
 			"maximum (htlc_out_msat=%d, policy_max_out_msat=%d)",
 			htlc.AmountOutMsat, policyMaxOutMsat)
+	}
+
+	// Enforce the negotiated floor: each HTLC must carry at
+	// least the minimum asset amount (converted to msat).
+	if c.MinOutboundAssetAmount > 0 {
+		minAssetAmt := rfqmath.NewBigIntFixedPoint(
+			c.MinOutboundAssetAmount, 0,
+		)
+		policyMinOutMsat := rfqmath.UnitsToMilliSatoshi(
+			minAssetAmt, c.AskAssetRate,
+		)
+
+		// Tolerance: 1 unit worth of msat + 1 msat for
+		// the rounding error in the units → msat → units
+		// round trip.
+		oneUnit := rfqmath.NewBigIntFixedPoint(1, 0)
+		tolerance := rfqmath.UnitsToMilliSatoshi(
+			oneUnit, c.AskAssetRate,
+		) + 1
+
+		if htlc.AmountOutMsat+tolerance < policyMinOutMsat {
+			return fmt.Errorf("HTLC out amount is "+
+				"less than the policy minimum "+
+				"(htlc_out_msat=%d, "+
+				"policy_min_msat=%d, "+
+				"tolerance_msat=%d)",
+				htlc.AmountOutMsat,
+				policyMinOutMsat, tolerance)
+		}
 	}
 
 	// Lastly, check to ensure that the policy has not expired.
@@ -439,8 +485,13 @@ type AssetPurchasePolicy struct {
 	htlcToAmt map[models.CircuitKey]lnwire.MilliSatoshi
 
 	// ExecutionPolicy is the execution policy from the original
-	// request (annotation only; not enforced at the HTLC level).
+	// request.
 	ExecutionPolicy fn.Option[rfqmsg.ExecutionPolicy]
+
+	// PaymentMinAmt is the minimum msat amount that each HTLC
+	// must carry. Derived from the negotiated fill quantity or
+	// FOK execution policy.
+	PaymentMinAmt lnwire.MilliSatoshi
 
 	// expiry is the policy's expiry unix timestamp in seconds after which
 	// the policy is no longer valid.
@@ -459,12 +510,24 @@ func NewAssetPurchasePolicy(quote rfqmsg.SellAccept) *AssetPurchasePolicy {
 		}
 	})
 
+	// Derive the floor from fill quantity and/or FOK policy.
+	// When fill is present, payMax is already
+	// min(fill, requestMax), so the floor equals payMax.
+	var payMin lnwire.MilliSatoshi
+	quote.AcceptedMaxAmount.WhenSome(func(_ uint64) {
+		payMin = payMax
+	})
+	if payMin == 0 && isFOK(quote.Request.ExecutionPolicy) {
+		payMin = payMax
+	}
+
 	return &AssetPurchasePolicy{
 		scid:            quote.ShortChannelId(),
 		AssetSpecifier:  quote.Request.AssetSpecifier,
 		AcceptedQuoteId: quote.ID,
 		BidAssetRate:    quote.AssetRate.Rate,
 		PaymentMaxAmt:   payMax,
+		PaymentMinAmt:   payMin,
 		expiry:          uint64(quote.AssetRate.Expiry.Unix()),
 		htlcToAmt:       htlcToAmtMap,
 		ExecutionPolicy: quote.Request.ExecutionPolicy,
@@ -537,6 +600,28 @@ func (c *AssetPurchasePolicy) CheckHtlcCompliance(ctx context.Context,
 			"agreed BTC payment (htlc_out_msat=%d, "+
 			"payment_max_amt=%d)", htlc.AmountOutMsat,
 			c.PaymentMaxAmt)
+	}
+
+	// Enforce the negotiated floor: each HTLC must carry at
+	// least the minimum msat amount.
+	if c.PaymentMinAmt > 0 {
+		// Tolerance: 1 unit worth of msat + 1 msat for
+		// the rounding error in the units → msat → units
+		// round trip.
+		oneUnit := rfqmath.NewBigIntFixedPoint(1, 0)
+		tolerance := rfqmath.UnitsToMilliSatoshi(
+			oneUnit, c.BidAssetRate,
+		) + 1
+
+		if htlc.AmountOutMsat+tolerance < c.PaymentMinAmt {
+			return fmt.Errorf("HTLC out amount is "+
+				"less than the policy minimum "+
+				"(htlc_out_msat=%d, "+
+				"policy_min_msat=%d, "+
+				"tolerance_msat=%d)",
+				htlc.AmountOutMsat,
+				c.PaymentMinAmt, tolerance)
+		}
 	}
 
 	// Lastly, check to ensure that the policy has not expired.
