@@ -120,16 +120,15 @@
   (Immediate-Or-Cancel, the default) allows partial fills above the
   minimum, while FOK (Fill-Or-Kill) requires the full requested amount
   or rejects the quote. FOK viability is checked in `VerifyAcceptQuote`
-  with a new `FOK_NOT_VIABLE` reject code. New fields are optional and
+  with a new `FOK_NOT_VIABLE` reject code, and is enforced
+  during payment at the HTLC level. New fields are optional and
   backward-compatible.
 
 - [Fill Quantity Negotiation](https://github.com/lightninglabs/taproot-assets/pull/2050):
   RFQ accept messages now carry an optional fill quantity, allowing
   the responder to signal the maximum amount it is willing to fill.
-  The negotiated fill caps HTLC policies so forwarding never exceeds
-  the agreed amount. `VerifyAcceptQuote` validates the fill against
-  request constraints (min fill, FOK viability). Zero fill on the
-  wire is normalised to None for backward compatibility.
+  The negotiated fill cap is persisted, and enforced at both the quote
+  acceptance and HTLC levels.
 
 ## Functional Enhancements
 
