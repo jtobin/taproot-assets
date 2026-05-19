@@ -1614,37 +1614,72 @@ func (a *AuxSweeper) importCommitTx(req lnwallet.ResolutionReq,
 	}
 
 	// With the funding proof for each asset ID known, we can now make the
-	// vPackets for each of the outputs.
+	// vPackets for each of the outputs. While doing so we also build the
+	// per-output script_key_local map that we'll hand to the chain porter
+	// alongside the parcel. We know authoritatively from the channel
+	// state and the close type which outputs are ours; the chain porter
+	// would otherwise have to derive this by walking the addr book at
+	// parcel-log time, and the addr-book state is populated by separate
+	// async paths (per-contract resolveContract calls) that race against
+	// the commit-tx parcel being shipped. Telling the porter directly
+	// avoids that race.
+	//
+	// The locality semantics:
+	//   - LocalAssets / RemoteAssets: ours iff our side owns the
+	//     corresponding commit output. On a remote force close, the
+	//     remote (counterparty) closed, so their "Local" output is
+	//     theirs and the "Remote" output is ours. On a local force
+	//     close, the reverse. On a breach we sweep everything, so both
+	//     are ours.
+	//   - HTLC outputs (both directions): always ours. Either party
+	//     can have rights to an HTLC output via either the success or
+	//     timeout path, regardless of which side initiated the close.
+	//     If a particular HTLC is never swept (peer offline through
+	//     timeout, etc.) the residual asset record marked local for an
+	//     unclaimable output is accepted: it doesn't unlock spendable
+	//     balance, since the script key's internal key isn't in our
+	//     keyring, and it's preferable to the alternative of dropping
+	//     records for HTLCs we may yet need to track.
 	vPktsByAssetID := make(map[asset.ID]*tappsbt.VPacket)
-	for _, localAsset := range commitState.LocalAssets.Val.Outputs {
+	scriptKeyLocalOverrides := make(map[asset.SerializedKey]bool)
+
+	addOutput := func(out *cmsg.AssetOutput, isLocal bool) error {
 		err := assetOutputToVPacket(
-			fundingInputProofs, vPktsByAssetID, localAsset,
+			fundingInputProofs, vPktsByAssetID, out,
 			&a.cfg.ChainParams, req.CommitTx,
 			a.cfg.DefaultCourierAddr,
 		)
 		if err != nil {
 			return err
 		}
+
+		serialized := asset.ToSerialized(
+			out.Proof.Val.Asset.ScriptKey.PubKey,
+		)
+		scriptKeyLocalOverrides[serialized] = isLocal
+
+		return nil
+	}
+
+	localCommitOurs := req.CloseType == lnwallet.LocalForceClose ||
+		req.CloseType == lnwallet.Breach
+	remoteCommitOurs := req.CloseType == lnwallet.RemoteForceClose ||
+		req.CloseType == lnwallet.Breach
+
+	for _, localAsset := range commitState.LocalAssets.Val.Outputs {
+		if err := addOutput(localAsset, localCommitOurs); err != nil {
+			return err
+		}
 	}
 	for _, remoteAsset := range commitState.RemoteAssets.Val.Outputs {
-		err := assetOutputToVPacket(
-			fundingInputProofs, vPktsByAssetID, remoteAsset,
-			&a.cfg.ChainParams, req.CommitTx,
-			a.cfg.DefaultCourierAddr,
-		)
-		if err != nil {
+		if err := addOutput(remoteAsset, remoteCommitOurs); err != nil {
 			return err
 		}
 	}
 	//nolint:lll
 	for _, outgoingHTLCs := range commitState.OutgoingHtlcAssets.Val.HtlcOutputs {
 		for _, outgoingHTLC := range outgoingHTLCs.Outputs {
-			err := assetOutputToVPacket(
-				fundingInputProofs, vPktsByAssetID, outgoingHTLC,
-				&a.cfg.ChainParams, req.CommitTx,
-				a.cfg.DefaultCourierAddr,
-			)
-			if err != nil {
+			if err := addOutput(outgoingHTLC, true); err != nil {
 				return err
 			}
 		}
@@ -1652,12 +1687,7 @@ func (a *AuxSweeper) importCommitTx(req lnwallet.ResolutionReq,
 	//nolint:lll
 	for _, incomingHTLCs := range commitState.IncomingHtlcAssets.Val.HtlcOutputs {
 		for _, incomingHTLC := range incomingHTLCs.Outputs {
-			err := assetOutputToVPacket(
-				fundingInputProofs, vPktsByAssetID, incomingHTLC,
-				&a.cfg.ChainParams, req.CommitTx,
-				a.cfg.DefaultCourierAddr,
-			)
-			if err != nil {
+			if err := addOutput(incomingHTLC, true); err != nil {
 				return err
 			}
 		}
@@ -1730,7 +1760,7 @@ func (a *AuxSweeper) importCommitTx(req lnwallet.ResolutionReq,
 
 	return shipChannelTxn(
 		a.cfg.TxSender, req.CommitTx, outCommitments, vPackets,
-		int64(req.CommitFee), heightHint,
+		int64(req.CommitFee), heightHint, scriptKeyLocalOverrides,
 	)
 }
 
@@ -2586,10 +2616,12 @@ func (a *AuxSweeper) registerAndBroadcastSweep(req *sweep.BumpRequest,
 	}
 
 	// With the output commitments re-created, we have all we need to log
-	// and ship the transaction.
+	// and ship the transaction. Sweep txs go to script keys we control
+	// (the wallet's sweep destination), so the chain porter's default
+	// isLocalKey lookup is sufficient -- no overrides needed.
 	return shipChannelTxn(
 		a.cfg.TxSender, sweepTx, outCommitments, allVpkts, int64(fee),
-		heightHint,
+		heightHint, nil,
 	)
 }
 

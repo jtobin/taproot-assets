@@ -1948,7 +1948,37 @@ func (p *ChainPorter) stateStep(currentPkg sendPackage) (*sendPackage, error) {
 		// (e.g. a change output) or an outbound transfer. A key being
 		// local means the lnd node connected to this daemon knows how
 		// to derive the key.
+		//
+		// If the parcel pre-declared the locality of a script key via
+		// ScriptKeyLocalOverrides, honor that directly. Channel
+		// force-close flows use this to avoid an addr-book lookup
+		// race: at parcel-log time the addr book may not yet contain
+		// entries for every output, but the caller (which built the
+		// vPackets from channel state) knows authoritatively which
+		// outputs are ours.
+		overrides := currentPkg.ScriptKeyLocalOverrides
 		isLocalKey := func(key asset.ScriptKey) (bool, error) {
+			if v, ok := lookupScriptKeyLocalOverride(
+				overrides, key,
+			); ok {
+				return v, nil
+			}
+
+			// If the caller did pass an override map but it
+			// didn't cover this output, log a hint that we're
+			// falling through. Useful for diagnosing a future
+			// regression where a new output type is added but
+			// the override map population isn't updated to
+			// match: the symptom would otherwise be a silent
+			// fallback to the (probably-incorrect) addr-book
+			// answer.
+			if overrides != nil {
+				log.Debugf("ScriptKeyLocalOverrides present "+
+					"but missing entry for %x; falling "+
+					"back to addr-book lookup",
+					key.PubKey.SerializeCompressed())
+			}
+
 			// To make sure we have the correct internal key with
 			// the family and index set, we attempt to fetch it
 			// from the database. If it exists, then we know we

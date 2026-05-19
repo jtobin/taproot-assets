@@ -736,10 +736,19 @@ func (a *AuxChanCloser) ShutdownBlob(
 // pre-signed package off to the porter. This'll insert a transfer for the
 // channel, send the final transaction to the network, and update any
 // transition proofs once a confirmation occurs.
+//
+// scriptKeyLocalOverrides may be nil. When non-nil, each entry maps an output
+// script key to an explicit script_key_local value that the chain porter will
+// honor instead of computing it via its default addr-book lookup. Callers in
+// the force-close and breach paths use this to avoid the race-prone addr-book
+// population those flows are subject to. The coop-close caller passes nil:
+// the vPackets there are built and shipped in a single synchronous pass, so
+// the default addr-book lookup is correct.
 func shipChannelTxn(txSender tapfreighter.Porter, chanTx *wire.MsgTx,
 	outputCommitments tappsbt.OutputCommitments,
 	vPkts []*tappsbt.VPacket, closeFee int64,
-	anchorTxHeightHint fn.Option[uint32]) error {
+	anchorTxHeightHint fn.Option[uint32],
+	scriptKeyLocalOverrides map[asset.SerializedKey]bool) error {
 
 	chanTxPsbt, err := tapsend.PrepareAnchoringTemplate(vPkts)
 	if err != nil {
@@ -769,7 +778,7 @@ func shipChannelTxn(txSender tapfreighter.Porter, chanTx *wire.MsgTx,
 	parcelLabel := fmt.Sprintf("channel-tx-%s", chanTx.TxHash().String())
 	preSignedParcel := tapfreighter.NewPreAnchoredParcel(
 		vPkts, nil, closeAnchor, false, parcelLabel,
-		anchorTxHeightHint,
+		anchorTxHeightHint, scriptKeyLocalOverrides,
 	)
 	_, err = txSender.RequestShipment(preSignedParcel)
 	if err != nil {
@@ -952,6 +961,7 @@ func (a *AuxChanCloser) FinalizeClose(desc types.AuxCloseDesc,
 	err := shipChannelTxn(
 		a.cfg.TxSender, closeTx, closeInfo.outputCommitments,
 		closeInfo.vPackets, closeInfo.closeFee, fn.None[uint32](),
+		nil,
 	)
 	if err != nil {
 		return err

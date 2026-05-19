@@ -436,29 +436,44 @@ type PreAnchoredParcel struct {
 	// anchorTxHeightHint is an optional height hint for the anchor
 	// transaction.
 	anchorTxHeightHint fn.Option[uint32]
+
+	// scriptKeyLocalOverrides lets the caller pre-declare, per output
+	// script key, whether that output should be treated as locally
+	// controlled when the parcel is logged. Used by channel force-close
+	// flows, where the caller knows from the commitment state which
+	// outputs are ours and shouldn't have to rely on the addr-book
+	// lookup race that LogPendingParcel's default isLocalKey
+	// computation depends on. May be nil for ordinary transfers.
+	scriptKeyLocalOverrides map[asset.SerializedKey]bool
 }
 
 // A compile-time assertion to ensure PreAnchoredParcel implements the Parcel
 // interface.
 var _ Parcel = (*PreAnchoredParcel)(nil)
 
-// NewPreAnchoredParcel creates a new PreAnchoredParcel.
+// NewPreAnchoredParcel creates a new PreAnchoredParcel. scriptKeyLocalOverrides
+// may be nil; if non-nil, the entries pre-declare per output script key whether
+// that output should be treated as locally controlled when the parcel is
+// logged, bypassing the default addr-book lookup.
 func NewPreAnchoredParcel(vPackets []*tappsbt.VPacket,
 	passiveAssets []*tappsbt.VPacket, anchorTx *tapsend.AnchorTransaction,
 	skipAnchorTxBroadcast bool, label string,
-	anchorTxHeightHint fn.Option[uint32]) *PreAnchoredParcel {
+	anchorTxHeightHint fn.Option[uint32],
+	scriptKeyLocalOverrides map[asset.SerializedKey]bool,
+) *PreAnchoredParcel {
 
 	return &PreAnchoredParcel{
 		parcelKit: &parcelKit{
 			respChan: make(chan *OutboundParcel, 1),
 			errChan:  make(chan error, 1),
 		},
-		virtualPackets:        vPackets,
-		passiveAssets:         passiveAssets,
-		anchorTx:              anchorTx,
-		skipAnchorTxBroadcast: skipAnchorTxBroadcast,
-		label:                 label,
-		anchorTxHeightHint:    anchorTxHeightHint,
+		virtualPackets:          vPackets,
+		passiveAssets:           passiveAssets,
+		anchorTx:                anchorTx,
+		skipAnchorTxBroadcast:   skipAnchorTxBroadcast,
+		label:                   label,
+		anchorTxHeightHint:      anchorTxHeightHint,
+		scriptKeyLocalOverrides: scriptKeyLocalOverrides,
 	}
 }
 
@@ -470,13 +485,14 @@ func (p *PreAnchoredParcel) pkg() *sendPackage {
 	// Initialize a package the signed virtual transaction and input
 	// commitment.
 	return &sendPackage{
-		Parcel:                p,
-		SendState:             SendStateVerifyPreBroadcast,
-		VirtualPackets:        p.virtualPackets,
-		PassiveAssets:         p.passiveAssets,
-		AnchorTx:              p.anchorTx,
-		Label:                 p.label,
-		SkipAnchorTxBroadcast: p.skipAnchorTxBroadcast,
+		Parcel:                  p,
+		SendState:               SendStateVerifyPreBroadcast,
+		VirtualPackets:          p.virtualPackets,
+		PassiveAssets:           p.passiveAssets,
+		AnchorTx:                p.anchorTx,
+		Label:                   p.label,
+		SkipAnchorTxBroadcast:   p.skipAnchorTxBroadcast,
+		ScriptKeyLocalOverrides: p.scriptKeyLocalOverrides,
 	}
 }
 
@@ -589,6 +605,27 @@ type sendPackage struct {
 	// broadcast should be skipped. Useful when an external system handles
 	// broadcasting, such as in custom transaction packaging workflows.
 	SkipAnchorTxBroadcast bool
+
+	// ScriptKeyLocalOverrides carries the same per-output script_key_local
+	// hints as PreAnchoredParcel.scriptKeyLocalOverrides; see that field
+	// for semantics. The chain porter reads it from here.
+	ScriptKeyLocalOverrides map[asset.SerializedKey]bool
+}
+
+// lookupScriptKeyLocalOverride checks an optional override map for the given
+// script key. On hit, returns (value, true); on miss or a nil map, returns
+// (false, false), signalling that the caller should fall back to its default
+// locality determination. Extracted as a pure function for unit-testability.
+func lookupScriptKeyLocalOverride(
+	overrides map[asset.SerializedKey]bool,
+	key asset.ScriptKey) (bool, bool) {
+
+	if overrides == nil {
+		return false, false
+	}
+
+	v, ok := overrides[asset.ToSerialized(key.PubKey)]
+	return v, ok
 }
 
 // ConvertToTransfer prepares the finished send data for storing to the database
