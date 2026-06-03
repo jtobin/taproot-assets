@@ -1173,71 +1173,111 @@ func reanchorAssetOutputs(ctx context.Context,
 	return nil
 }
 
-// anchorOutputAllocations is a helper function that creates a set of
-// allocations for the anchor outputs. We'll use this later to create the proper
-// exclusion proofs.
-func anchorOutputAllocations(
-	keyRing *lnwallet.CommitmentKeyRing) lfn.Result[[]*tapsend.Allocation] {
+// commitOutputAllocations builds NoAssets allocations for the actual
+// non-asset outputs of the real commitment transaction. Walks
+// req.CommitTx and emits an allocation per output that doesn't carry an
+// asset, matching against the candidate script trees for the
+// local/remote anchor and to_local/to_remote outputs.
+func commitOutputAllocations(req lnwallet.ResolutionReq,
+	vPackets []*tappsbt.VPacket) lfn.Result[[]*tapsend.Allocation] {
 
-	anchorAlloc := func(
-		k *btcec.PublicKey) lfn.Result[*tapsend.Allocation] {
-
-		anchorTree, err := input.NewAnchorScriptTree(k)
-		if err != nil {
-			return lfn.Err[*tapsend.Allocation](err)
-		}
-
-		sibling, scriptTree, err := LeavesFromTapscriptScriptTree(
-			anchorTree,
+	if req.CommitTx == nil {
+		return lfn.Err[[]*tapsend.Allocation](
+			fmt.Errorf("commit tx not set"),
 		)
+	}
+
+	assetOutputs := make(map[uint32]struct{})
+	for _, vPkt := range vPackets {
+		for _, vOut := range vPkt.Outputs {
+			assetOutputs[vOut.AnchorOutputIndex] = struct{}{}
+		}
+	}
+
+	findOutputIndex := func(pkScript []byte) (uint32, bool) {
+		for idx, txOut := range req.CommitTx.TxOut {
+			if bytes.Equal(txOut.PkScript, pkScript) {
+				return uint32(idx), true
+			}
+		}
+		return 0, false
+	}
+
+	newNoAssetAlloc := func(desc input.ScriptDescriptor) (
+		*tapsend.Allocation, error) {
+
+		sibling, tree, err := LeavesFromTapscriptScriptTree(desc)
 		if err != nil {
-			return lfn.Err[*tapsend.Allocation](err)
+			return nil, err
 		}
 
-		return lfn.Ok(&tapsend.Allocation{
+		pkScript, err := txscript.PayToTaprootScript(tree.TaprootKey)
+		if err != nil {
+			return nil, err
+		}
+
+		outputIndex, ok := findOutputIndex(pkScript)
+		if !ok {
+			return nil, nil
+		}
+		if _, hasAssets := assetOutputs[outputIndex]; hasAssets {
+			return nil, nil
+		}
+
+		return &tapsend.Allocation{
 			Type:           tapsend.AllocationTypeNoAssets,
-			Amount:         0,
-			BtcAmount:      lnwallet.AnchorSize,
-			InternalKey:    scriptTree.InternalKey,
+			OutputIndex:    outputIndex,
+			BtcAmount: btcutil.Amount(
+				req.CommitTx.TxOut[outputIndex].Value,
+			),
+			InternalKey:    tree.InternalKey,
 			NonAssetLeaves: sibling,
 			SortTaprootKeyBytes: schnorr.SerializePubKey(
-				scriptTree.TaprootKey,
+				tree.TaprootKey,
 			),
-		})
+		}, nil
 	}
 
-	localAnchor := anchorAlloc(keyRing.ToLocalKey)
-	remoteAnchor := anchorAlloc(keyRing.ToRemoteKey)
-
-	type resultType = lfn.Result[[]*tapsend.Allocation]
-	sortAnchor := func(a1, a2 *tapsend.Allocation) resultType {
-		// Before we return the anchors, we'll make sure that
-		// they end up in the right sort order.
-		scriptCompare := bytes.Compare(
-			a1.SortTaprootKeyBytes, a2.SortTaprootKeyBytes,
-		)
-
-		if scriptCompare < 0 {
-			a1.OutputIndex = 0
-			a2.OutputIndex = 1
-		} else {
-			a2.OutputIndex = 0
-			a1.OutputIndex = 1
-		}
-
-		return lfn.Ok([]*tapsend.Allocation{a1, a2})
-	}
-
-	return lfn.FlatMapResult(
-		localAnchor, func(a1 *tapsend.Allocation) resultType {
-			return lfn.FlatMapResult(
-				remoteAnchor,
-				func(a2 *tapsend.Allocation) resultType {
-					return sortAnchor(a1, a2)
-				},
-			)
-		},
+	toLocalTree, err := input.NewLocalCommitScriptTree(
+		req.CsvDelay, req.KeyRing.ToLocalKey,
+		req.KeyRing.RevocationKey, input.NoneTapLeaf(),
 	)
+	if err != nil {
+		return lfn.Err[[]*tapsend.Allocation](err)
+	}
+	toRemoteTree, err := input.NewRemoteCommitScriptTree(
+		req.KeyRing.ToRemoteKey, input.NoneTapLeaf(),
+	)
+	if err != nil {
+		return lfn.Err[[]*tapsend.Allocation](err)
+	}
+	localAnchorTree, err := input.NewAnchorScriptTree(
+		req.KeyRing.ToLocalKey,
+	)
+	if err != nil {
+		return lfn.Err[[]*tapsend.Allocation](err)
+	}
+	remoteAnchorTree, err := input.NewAnchorScriptTree(
+		req.KeyRing.ToRemoteKey,
+	)
+	if err != nil {
+		return lfn.Err[[]*tapsend.Allocation](err)
+	}
+
+	allocs := make([]*tapsend.Allocation, 0, 4)
+	for _, desc := range []input.ScriptDescriptor{
+		toLocalTree, toRemoteTree, localAnchorTree, remoteAnchorTree,
+	} {
+		alloc, err := newNoAssetAlloc(desc)
+		if err != nil {
+			return lfn.Err[[]*tapsend.Allocation](err)
+		}
+		if alloc != nil {
+			allocs = append(allocs, alloc)
+		}
+	}
+
+	return lfn.Ok(allocs)
 }
 
 // remoteCommitScriptKey creates the script key for the remote commitment
@@ -1799,9 +1839,14 @@ func (a *AuxSweeper) importCommitTx(req lnwallet.ResolutionReq,
 			"commitments: %w", err)
 	}
 
-	// With the output commitments known, we can regenerate the proof suffix
-	// for each vPkt.
-	anchorAllocations, err := anchorOutputAllocations(req.KeyRing).Unpack()
+	// With the output commitments known, we can regenerate the proof
+	// suffix for each vPkt. Recompute the non-asset allocations from the
+	// real commit tx outputs so the exclusion proofs line up with what's
+	// actually on chain, regardless of whether this is a symmetric or an
+	// asymmetric commitment.
+	anchorAllocations, err := commitOutputAllocations(
+		req, vPackets,
+	).Unpack()
 	if err != nil {
 		return fmt.Errorf("unable to create anchor "+
 			"allocations: %w", err)
