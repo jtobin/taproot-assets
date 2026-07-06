@@ -909,6 +909,7 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 			GroupVerifier:      groupVerifier,
 			ChainBridge:        chainBridge,
 			IgnoreChecker:      ignoreCheckerOpt,
+			AnchoringRegistrar: assetCustodian,
 			ProofWatcher:       reOrgWatcher,
 		},
 	)

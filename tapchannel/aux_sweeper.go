@@ -3,6 +3,7 @@ package tapchannel
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -21,6 +22,7 @@ import (
 	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightninglabs/taproot-assets/tapchannelmsg"
 	cmsg "github.com/lightninglabs/taproot-assets/tapchannelmsg"
+	"github.com/lightninglabs/taproot-assets/tapcustody"
 	"github.com/lightninglabs/taproot-assets/tapfreighter"
 	"github.com/lightninglabs/taproot-assets/tapnode"
 	"github.com/lightninglabs/taproot-assets/tappsbt"
@@ -133,6 +135,19 @@ type AuxSweeperCfg struct {
 	// IgnoreChecker is an optional function that can be used to check if
 	// a proof should be ignored.
 	IgnoreChecker lfn.Option[proof.IgnoreChecker]
+
+	// AnchoringRegistrar registers imported sweep and commitment
+	// proof files as speculative anchorings with the re-org watcher,
+	// which then owns their full re-org lifecycle (re-confirmation
+	// patching, conflict downgrades, and abandonment compensation
+	// when a different sweep form wins). Implemented by the
+	// custodian: the sweep side's speculative state has exactly the
+	// receive shape — an imported file plus materialized asset rows
+	// keyed to an anchor transaction. When a replacement sweep form
+	// confirms after a re-org, its own materialization registers a
+	// fresh anchoring for the winning transaction, while the stale
+	// form's anchoring abandons and compensates its rows.
+	AnchoringRegistrar ReceiveAnchoringRegistrar
 
 	// ProofWatcher is used to watch proofs we import for their anchor
 	// transaction being re-organized out of the chain, so their block
@@ -1674,19 +1689,48 @@ func (a *AuxSweeper) materializeAssetOutputs(ctx context.Context,
 			return fmt.Errorf("unable to import proof: %w", err)
 		}
 
-		// Hand the transition proof to the re-org watcher, so its
-		// block info is patched in the archive if the commitment
-		// transaction is re-organized into a different block.
-		err = a.cfg.ProofWatcher.WatchProofs(
-			[]*proof.Proof{outProof},
-			a.cfg.ProofWatcher.DefaultUpdateCallback(),
-		)
-		if err != nil {
-			return fmt.Errorf("unable to watch proof: %w", err)
+		// Hand the imported state to the re-org watcher: as a
+		// speculative anchoring when the registrar is available (and
+		// a trigger set is derivable from the file), falling back to
+		// the legacy proof watcher otherwise.
+		registered := false
+		if a.cfg.AnchoringRegistrar != nil {
+			err := a.cfg.AnchoringRegistrar.
+				RegisterReceiveAnchoring(ctx, &proofFile)
+			switch {
+			case err == nil:
+				registered = true
+
+			case errors.Is(err, tapcustody.ErrNoTriggers):
+
+			default:
+				return fmt.Errorf("unable to register sweep "+
+					"anchoring: %w", err)
+			}
+		}
+		if !registered {
+			err = a.cfg.ProofWatcher.WatchProofs(
+				[]*proof.Proof{outProof},
+				a.cfg.ProofWatcher.DefaultUpdateCallback(),
+			)
+			if err != nil {
+				return fmt.Errorf("unable to watch proof: "+
+					"%w", err)
+			}
 		}
 	}
 
 	return nil
+}
+
+// ReceiveAnchoringRegistrar registers an imported proof file as a
+// speculative anchoring with the re-org watcher.
+type ReceiveAnchoringRegistrar interface {
+	// RegisterReceiveAnchoring stakes the file's imported state on
+	// its tip anchor transaction; it returns
+	// tapcustody.ErrNoTriggers when no trigger set is derivable.
+	RegisterReceiveAnchoring(ctx context.Context,
+		file *proof.File) error
 }
 
 // importCommitTx imports the commitment transaction into the wallet. This is
