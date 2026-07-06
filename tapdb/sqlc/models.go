@@ -418,6 +418,8 @@ type ReorgCandidateSpend struct {
 	BlockHeight    sql.NullInt32
 	TxIndex        sql.NullInt32
 	ActCertified   bool
+	BlockHeader    []byte
+	MerkleProof    []byte
 	SpentOutpoints []byte
 }
 

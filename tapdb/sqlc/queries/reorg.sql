@@ -55,11 +55,12 @@ ORDER BY id;
 -- since a certified act crossing is never retracted by re-orgs.
 INSERT INTO reorg_candidate_spends (
     anchoring_id, spender_txid, raw_tx, verdict, on_chain, block_hash,
-    block_height, tx_index, act_certified, spent_outpoints
+    block_height, tx_index, act_certified, block_header, merkle_proof,
+    spent_outpoints
 ) VALUES (
     @anchoring_id, @spender_txid, @raw_tx, @verdict, @on_chain,
     @block_hash, @block_height, @tx_index, @act_certified,
-    @spent_outpoints
+    @block_header, @merkle_proof, @spent_outpoints
 )
 ON CONFLICT (anchoring_id, spender_txid)
 DO UPDATE SET
@@ -71,6 +72,8 @@ DO UPDATE SET
     tx_index = EXCLUDED.tx_index,
     act_certified = reorg_candidate_spends.act_certified
         OR EXCLUDED.act_certified,
+    block_header = EXCLUDED.block_header,
+    merkle_proof = EXCLUDED.merkle_proof,
     spent_outpoints = EXCLUDED.spent_outpoints;
 
 -- name: SetReorgAnchoringPhase :exec

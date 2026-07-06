@@ -11,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/taproot-assets/fn"
+	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/clock"
 )
@@ -102,6 +103,7 @@ type Watcher struct {
 
 	sites          map[SiteID]Site
 	effectHandlers map[EffectKind]EffectHandler
+	listeners      []DeliveryListener
 
 	bestHeight atomic.Uint32
 
@@ -149,6 +151,18 @@ func (w *Watcher) RegisterSite(site Site) error {
 	w.sites[site.ID()] = site
 
 	return nil
+}
+
+// DeliveryListener observes successful deliveries, invoked after the
+// delivery transaction commits. Latency path only: the registry
+// remains the durable delivery record, and a missed notification is
+// recovered by reading it.
+type DeliveryListener func(id AnchoringID, site SiteID, phase Phase)
+
+// RegisterDeliveryListener installs a delivery listener. All
+// listeners are registered before Start.
+func (w *Watcher) RegisterDeliveryListener(listener DeliveryListener) {
+	w.listeners = append(w.listeners, listener)
 }
 
 // RegisterEffectHandler installs the dispatch handler for one effect
@@ -438,6 +452,30 @@ func (w *Watcher) sensingLoop(initial []*Anchoring) {
 			return
 		}
 	}
+}
+
+// witnessEnrichment extracts the including block's header and the
+// transaction's merkle inclusion proof from a confirmation event, so
+// handlers can rebuild proofs without network access.
+func witnessEnrichment(
+	conf *chainntnfs.TxConfirmation) (*wire.BlockHeader,
+	*proof.TxMerkleProof) {
+
+	if conf.Block == nil {
+		return nil, nil
+	}
+
+	header := conf.Block.Header
+	merkle, err := proof.NewTxMerkleProof(
+		conf.Block.Transactions, int(conf.TxIndex),
+	)
+	if err != nil {
+		log.Errorf("Unable to build merkle proof from conf "+
+			"block: %v", err)
+		return &header, nil
+	}
+
+	return &header, merkle
 }
 
 // verifyLocation reports whether a transaction recorded at (height,
@@ -1021,6 +1059,7 @@ func (w *Watcher) handleCandidateConf(ctx context.Context,
 		}
 	}
 
+	header, merkle := witnessEnrichment(conf)
 	err = w.cfg.Registry.UpsertCandidate(ctx, ev.id, CandidateSpend{
 		Verdict: verdict,
 		W:       witness,
@@ -1028,6 +1067,8 @@ func (w *Watcher) handleCandidateConf(ctx context.Context,
 		// At a threshold of one, the first confirmation is
 		// itself the act certification.
 		ActCertified:   s.anchoring.Threshold <= 1,
+		BlockHeader:    header,
+		MerkleProof:    merkle,
 		SpentOutPoints: spent,
 	})
 	if err != nil {
@@ -1108,11 +1149,14 @@ func (w *Watcher) handleCandidateActConf(ctx context.Context,
 		return
 	}
 
+	header, merkle := witnessEnrichment(conf)
 	err = w.cfg.Registry.UpsertCandidate(ctx, ev.id, CandidateSpend{
 		Verdict:        verdict,
 		W:              witness,
 		OnChain:        onChain,
 		ActCertified:   true,
+		BlockHeader:    header,
+		MerkleProof:    merkle,
 		SpentOutPoints: spent,
 	})
 	if err != nil {
@@ -1457,6 +1501,10 @@ func (w *Watcher) deliverOne(ctx context.Context, anchoring *Anchoring) {
 
 	log.Infof("Anchoring %d (site=%v): delivered %v", anchoring.ID,
 		anchoring.Site, target)
+
+	for _, listener := range w.listeners {
+		listener(anchoring.ID, anchoring.Site, target)
+	}
 
 	// Handlers may have enqueued effects.
 	w.kick(w.outboxKick)

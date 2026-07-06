@@ -120,6 +120,16 @@ CREATE TABLE reorg_candidate_spends (
     -- possibly-torn view. Sticky: never cleared by later re-orgs.
     act_certified BOOLEAN NOT NULL DEFAULT FALSE,
 
+    -- Witness enrichment, captured from the confirmation event at
+    -- sensing time: the header of the including block and the
+    -- transaction's merkle inclusion proof. Site handlers rebuild
+    -- proofs from these without any network access inside their
+    -- transaction.
+    block_header BLOB CHECK(
+        block_header IS NULL OR length(block_header) = 80
+    ),
+    merkle_proof BLOB,
+
     -- The trigger outpoints this candidate spends, encoded as a
     -- concatenation of (txid || big-endian index) tuples.
     spent_outpoints BLOB NOT NULL

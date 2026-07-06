@@ -129,7 +129,7 @@ func (q *Queries) FetchReorgAnchoring(ctx context.Context, id int64) (ReorgAncho
 }
 
 const FetchReorgCandidateSpends = `-- name: FetchReorgCandidateSpends :many
-SELECT id, anchoring_id, spender_txid, raw_tx, verdict, on_chain, block_hash, block_height, tx_index, act_certified, spent_outpoints
+SELECT id, anchoring_id, spender_txid, raw_tx, verdict, on_chain, block_hash, block_height, tx_index, act_certified, block_header, merkle_proof, spent_outpoints
 FROM reorg_candidate_spends
 WHERE anchoring_id = $1
 ORDER BY spender_txid
@@ -155,6 +155,8 @@ func (q *Queries) FetchReorgCandidateSpends(ctx context.Context, anchoringID int
 			&i.BlockHeight,
 			&i.TxIndex,
 			&i.ActCertified,
+			&i.BlockHeader,
+			&i.MerkleProof,
 			&i.SpentOutpoints,
 		); err != nil {
 			return nil, err
@@ -767,11 +769,12 @@ func (q *Queries) UpdateReorgDependencyForeclosure(ctx context.Context, arg Upda
 const UpsertReorgCandidateSpend = `-- name: UpsertReorgCandidateSpend :exec
 INSERT INTO reorg_candidate_spends (
     anchoring_id, spender_txid, raw_tx, verdict, on_chain, block_hash,
-    block_height, tx_index, act_certified, spent_outpoints
+    block_height, tx_index, act_certified, block_header, merkle_proof,
+    spent_outpoints
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9,
-    $10
+    $10, $11, $12
 )
 ON CONFLICT (anchoring_id, spender_txid)
 DO UPDATE SET
@@ -783,6 +786,8 @@ DO UPDATE SET
     tx_index = EXCLUDED.tx_index,
     act_certified = reorg_candidate_spends.act_certified
         OR EXCLUDED.act_certified,
+    block_header = EXCLUDED.block_header,
+    merkle_proof = EXCLUDED.merkle_proof,
     spent_outpoints = EXCLUDED.spent_outpoints
 `
 
@@ -796,6 +801,8 @@ type UpsertReorgCandidateSpendParams struct {
 	BlockHeight    sql.NullInt32
 	TxIndex        sql.NullInt32
 	ActCertified   bool
+	BlockHeader    []byte
+	MerkleProof    []byte
 	SpentOutpoints []byte
 }
 
@@ -812,6 +819,8 @@ func (q *Queries) UpsertReorgCandidateSpend(ctx context.Context, arg UpsertReorg
 		arg.BlockHeight,
 		arg.TxIndex,
 		arg.ActCertified,
+		arg.BlockHeader,
+		arg.MerkleProof,
 		arg.SpentOutpoints,
 	)
 	return err

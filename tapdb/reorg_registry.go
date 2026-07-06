@@ -11,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/taproot-assets/fn"
+	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightninglabs/taproot-assets/tapdb/sqlc"
 	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightningnetwork/lnd/clock"
@@ -304,6 +305,26 @@ func (s *ReorgRegistryStore) UpsertCandidate(ctx context.Context,
 	spenderTxid := candidate.W.TxHash()
 	blockHash := candidate.W.BlockHash()
 
+	var headerBytes, merkleBytes []byte
+	if candidate.BlockHeader != nil {
+		var buf bytes.Buffer
+		err := candidate.BlockHeader.Serialize(&buf)
+		if err != nil {
+			return fmt.Errorf("unable to serialize block "+
+				"header: %w", err)
+		}
+		headerBytes = buf.Bytes()
+	}
+	if candidate.MerkleProof != nil {
+		var buf bytes.Buffer
+		err := candidate.MerkleProof.Encode(&buf)
+		if err != nil {
+			return fmt.Errorf("unable to encode merkle "+
+				"proof: %w", err)
+		}
+		merkleBytes = buf.Bytes()
+	}
+
 	return s.db.ExecTx(ctx, WriteTxOption(), func(q *sqlc.Queries) error {
 		return q.UpsertReorgCandidateSpend(
 			ctx, sqlc.UpsertReorgCandidateSpendParams{
@@ -325,6 +346,8 @@ func (s *ReorgRegistryStore) UpsertCandidate(ctx context.Context,
 					Valid: true,
 				},
 				ActCertified: candidate.ActCertified,
+				BlockHeader:  headerBytes,
+				MerkleProof:  merkleBytes,
 				SpentOutpoints: orEmpty(
 					tapreorg.EncodeOutPoints(
 						candidate.SpentOutPoints,
@@ -942,11 +965,33 @@ func assembleCandidate(
 		return zero, err
 	}
 
+	var header *wire.BlockHeader
+	if len(row.BlockHeader) > 0 {
+		header = &wire.BlockHeader{}
+		err := header.Deserialize(bytes.NewReader(row.BlockHeader))
+		if err != nil {
+			return zero, fmt.Errorf("candidate %d header: %w",
+				row.ID, err)
+		}
+	}
+
+	var merkle *proof.TxMerkleProof
+	if len(row.MerkleProof) > 0 {
+		merkle = &proof.TxMerkleProof{}
+		err := merkle.Decode(bytes.NewReader(row.MerkleProof))
+		if err != nil {
+			return zero, fmt.Errorf("candidate %d merkle "+
+				"proof: %w", row.ID, err)
+		}
+	}
+
 	return tapreorg.CandidateSpend{
 		Verdict:        verdict,
 		W:              w,
 		OnChain:        row.OnChain,
 		ActCertified:   row.ActCertified,
+		BlockHeader:    header,
+		MerkleProof:    merkle,
 		SpentOutPoints: spent,
 	}, nil
 }
