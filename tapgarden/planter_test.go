@@ -235,7 +235,6 @@ func (t *mintingTestHarness) assertBatchResumedBackground(wg *sync.WaitGroup,
 	}()
 }
 
-
 // queueSeedlingsInBatch adds the series of seedlings to the batch, an error is
 // raised if any of the seedlings aren't accepted.
 func (t *mintingTestHarness) queueSeedlingsInBatch(isFunded bool,

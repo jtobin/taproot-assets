@@ -959,6 +959,53 @@ func (b *Cultivator) stateStep(currentState BatchState) (BatchState, error) {
 				"transaction: %w", err)
 		}
 
+		// On the anchoring path, the re-org watcher is the sole
+		// sensor: the batch registers its genesis transaction as a
+		// speculative anchoring (idempotently), and a goroutine waits
+		// on the registry's delivered phase instead of a
+		// cultivator-owned confirmation subscription.
+		if b.cfg.AnchoringWatcher != nil {
+			regCtx, regCancel := b.WithCtxQuitNoTimeout()
+
+			err := b.registerMintAnchoring(regCtx, signedTx)
+			if err != nil {
+				regCancel()
+
+				return 0, fmt.Errorf("unable to register "+
+					"mint anchoring: %w", err)
+			}
+
+			txHash := signedTx.TxHash()
+			b.Wg.Add(1)
+			go func() {
+				defer regCancel()
+				defer b.Wg.Done()
+
+				confEvent, err := b.waitForMintAnchoring(
+					regCtx, txHash,
+				)
+				if err != nil {
+					if !fn.IsCanceled(err) {
+						b.cfg.ErrChan <- err
+					}
+
+					return
+				}
+
+				select {
+				case b.confEvent <- confEvent:
+				case <-regCtx.Done():
+				case <-b.Quit:
+				}
+			}()
+
+			log.Infof("Cultivator(%x): transition states: %v -> "+
+				"%v", b.batchKey[:], BatchStateBroadcast,
+				BatchStateBroadcast)
+
+			return BatchStateBroadcast, nil
+		}
+
 		// Now we'll wait for a confirmation as we reach our terminal
 		// state that requires an on-chain event to shift from. We make
 		// sure to request that the block is included as well, since we
@@ -1199,7 +1246,16 @@ func (b *Cultivator) stateStep(currentState BatchState) (BatchState, error) {
 		// configured, ship the batch out now. Publishing is extrinsic
 		// to tapgarden's end (a verifiable asset in the local store);
 		// the publisher owns retry and batching semantics.
-		if b.cfg.MintProofPublisher != nil {
+		//
+		// On the anchoring path, publication and the augmenter's
+		// supply-commit events are act-gated: the mint site's Buried
+		// handler enqueues them on the watcher's outbox once the
+		// genesis transaction reaches the anchoring threshold, and
+		// the re-org lifecycle (re-confirmation patching, conflict
+		// downgrades, abandonment compensation) is owned by the
+		// site's handlers rather than a per-proof callback.
+		anchoringPath := b.cfg.AnchoringWatcher != nil
+		if !anchoringPath && b.cfg.MintProofPublisher != nil {
 			publishAssets := make(
 				[]*asset.Asset, 0,
 				len(anchorAssets)+len(nonAnchorAssets),
@@ -1237,13 +1293,15 @@ func (b *Cultivator) stateStep(currentState BatchState) (BatchState, error) {
 		// index (migration 62, backfilled by 63) makes the
 		// augmenter side idempotent, and MarkBatchConfirmed is
 		// the last write below -- so retry is safe.
-		err = b.augmenter().OnBatchConfirmed(
-			ctx, b.cfg.Batch, anchorAssets, nonAnchorAssets,
-			mintingProofs,
-		)
-		if err != nil {
-			return 0, fmt.Errorf("augmenter OnBatchConfirmed: %w",
-				err)
+		if !anchoringPath {
+			err = b.augmenter().OnBatchConfirmed(
+				ctx, b.cfg.Batch, anchorAssets,
+				nonAnchorAssets, mintingProofs,
+			)
+			if err != nil {
+				return 0, fmt.Errorf("augmenter "+
+					"OnBatchConfirmed: %w", err)
+			}
 		}
 
 		// Register the batch's proofs with the re-org watcher
@@ -1258,10 +1316,14 @@ func (b *Cultivator) stateStep(currentState BatchState) (BatchState, error) {
 		// re-register with its DefaultUpdateCallback, silently
 		// dropping the universe re-publish on any subsequent
 		// re-org.
-		if err := b.cfg.ProofWatcher.WatchProofs(
-			maps.Values(mintingProofs), b.cfg.UpdateMintingProofs,
-		); err != nil {
-			return 0, fmt.Errorf("error watching proof: %w", err)
+		if !anchoringPath {
+			if err := b.cfg.ProofWatcher.WatchProofs(
+				maps.Values(mintingProofs),
+				b.cfg.UpdateMintingProofs,
+			); err != nil {
+				return 0, fmt.Errorf("error watching "+
+					"proof: %w", err)
+			}
 		}
 
 		// MarkBatchConfirmed is the last persistence write in

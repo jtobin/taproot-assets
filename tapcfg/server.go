@@ -734,6 +734,43 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 		},
 	)
 
+	assetMinter := tapgarden.NewChainPlanter(tapgarden.PlanterConfig{
+		// nolint: lll
+		GardenKit: tapgarden.GardenKit{
+			Wallet:       walletAnchor,
+			ChainBridge:  chainBridge,
+			BatchStore:   assetMintingStore,
+			MintingRefs:  assetMintingStore,
+			TreeStore:    assetMintingStore,
+			KeyRing:      keyRing,
+			GenSigner:    virtualTxSigner,
+			GenTxBuilder: &tapscript.GroupTxBuilder{},
+			TxValidator:  &tap.ValidatorV0{},
+			ProofFiles:   proofFileStore,
+			MintProofPublisher: mintpublish.NewPublisher(
+				universeFederation,
+				defaultUniverseSyncBatchSize,
+			),
+			ProofWatcher:  reOrgWatcher,
+			IgnoreChecker: ignoreCheckerOpt,
+			GenesisTxAugmenter: supplycommit.NewGenesisAugmenter(
+				supplycommit.GenesisAugmenterCfg{
+					PreCommitStore:       tapdb.NewSupplyPreCommitStore(mintingStore),
+					KeyRing:              keyRing,
+					DelegationKeyChecker: addrBook,
+					MintEvents:           supplyCommitManager,
+					ChainParams:          tapChainParams,
+				},
+			),
+			AnchoringWatcher:   anchoringWatcher,
+			MintAnchoringLog:   assetStore,
+			AnchoringThreshold: uint32(cfg.ReOrgSafeDepth),
+		},
+		ChainParams:  tapChainParams,
+		ProofUpdates: proofArchive,
+		ErrChan:      mainErrChan,
+	})
+
 	assetCustodian := tapcustody.NewCustodian(&tapcustody.Config{
 		ChainParams:            &tapChainParams,
 		WalletAnchor:           walletAnchor,
@@ -777,6 +814,19 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 	if err != nil {
 		return nil, fmt.Errorf("unable to register receive site: %w",
 			err)
+	}
+	err = anchoringWatcher.RegisterSite(assetMinter.AnchoringSite())
+	if err != nil {
+		return nil, fmt.Errorf("unable to register mint site: %w",
+			err)
+	}
+	err = anchoringWatcher.RegisterEffectHandler(
+		tapgarden.MintPublishEffectKind,
+		assetMinter.DispatchMintPublish,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to register mint publish "+
+			"handler: %w", err)
 	}
 
 	auxFundingController := tapchannel.NewFundingController(
@@ -865,48 +915,16 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 
 	// nolint: lll
 	return &tapconfig.Config{
-		DebugLevel:            cfg.DebugLevel,
-		Version:               tap.Version(),
-		RuntimeID:             runtimeID,
-		EnableChannelFeatures: enableChannelFeatures,
-		Lnd:                   lndServices,
-		ChainParams:           tapChainParams,
-		ReOrgWatcher:          reOrgWatcher,
-		AnchoringWatcher:      anchoringWatcher,
-		AnchoringRegistry:     anchoringRegistry,
-		AssetMinter: tapgarden.NewChainPlanter(tapgarden.PlanterConfig{
-			// nolint: lll
-			GardenKit: tapgarden.GardenKit{
-				Wallet:       walletAnchor,
-				ChainBridge:  chainBridge,
-				BatchStore:   assetMintingStore,
-				MintingRefs:  assetMintingStore,
-				TreeStore:    assetMintingStore,
-				KeyRing:      keyRing,
-				GenSigner:    virtualTxSigner,
-				GenTxBuilder: &tapscript.GroupTxBuilder{},
-				TxValidator:  &tap.ValidatorV0{},
-				ProofFiles:   proofFileStore,
-				MintProofPublisher: mintpublish.NewPublisher(
-					universeFederation,
-					defaultUniverseSyncBatchSize,
-				),
-				ProofWatcher:  reOrgWatcher,
-				IgnoreChecker: ignoreCheckerOpt,
-				GenesisTxAugmenter: supplycommit.NewGenesisAugmenter(
-					supplycommit.GenesisAugmenterCfg{
-						PreCommitStore:       tapdb.NewSupplyPreCommitStore(mintingStore),
-						KeyRing:              keyRing,
-						DelegationKeyChecker: addrBook,
-						MintEvents:           supplyCommitManager,
-						ChainParams:          tapChainParams,
-					},
-				),
-			},
-			ChainParams:  tapChainParams,
-			ProofUpdates: proofArchive,
-			ErrChan:      mainErrChan,
-		}),
+		DebugLevel:               cfg.DebugLevel,
+		Version:                  tap.Version(),
+		RuntimeID:                runtimeID,
+		EnableChannelFeatures:    enableChannelFeatures,
+		Lnd:                      lndServices,
+		ChainParams:              tapChainParams,
+		ReOrgWatcher:             reOrgWatcher,
+		AnchoringWatcher:         anchoringWatcher,
+		AnchoringRegistry:        anchoringRegistry,
+		AssetMinter:              assetMinter,
 		AssetCustodian:           assetCustodian,
 		ChainBridge:              chainBridge,
 		AddrBook:                 addrBook,

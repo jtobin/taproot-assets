@@ -23,6 +23,7 @@ import (
 	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightninglabs/taproot-assets/tapnode"
 	"github.com/lightninglabs/taproot-assets/tappsbt"
+	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightninglabs/taproot-assets/tapscript"
 	"github.com/lightninglabs/taproot-assets/tapsend"
 	lfn "github.com/lightningnetwork/lnd/fn/v2"
@@ -76,6 +77,21 @@ type GardenKit struct {
 
 	// ProofFiles stores the set of flat proof files.
 	ProofFiles proof.Archiver
+
+	// AnchoringWatcher is the re-org watcher batches register their
+	// genesis transactions with as speculative anchorings. When set,
+	// confirmation flows through the watcher's registry instead of a
+	// cultivator-owned subscription, and universe publication plus
+	// supply-commit events are act-gated on burial.
+	AnchoringWatcher *tapreorg.Watcher
+
+	// MintAnchoringLog is the transaction-scoped persistence surface
+	// the mint site drives from its watcher handlers.
+	MintAnchoringLog MintAnchoringLog
+
+	// AnchoringThreshold is the confirmation depth at which a batch
+	// is act-confirmed (buried).
+	AnchoringThreshold uint32
 
 	// MintProofPublisher ships freshly-minted (or re-organized) proofs
 	// to a downstream distributor (e.g. a local/remote universe). If
