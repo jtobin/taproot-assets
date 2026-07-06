@@ -35,6 +35,7 @@ type supplyCommitTestSetup struct {
 	commitMachine   *SupplyCommitMachine
 	commitTreeStore *SupplyTreeStore
 	db              sqlc.Querier
+	baseDB          *BaseDB
 	baseGenesis     asset.Genesis
 	groupPubKey     *btcec.PublicKey
 }
@@ -85,6 +86,7 @@ func setupSupplyCommitTest(t *testing.T) *supplyCommitTestSetup {
 		commitMachine:   commitMachine,
 		commitTreeStore: commitTreeStore,
 		db:              db,
+		baseDB:          sqlDB,
 		baseGenesis:     baseGenesis,
 		groupPubKey:     groupPubKey,
 	}
@@ -201,6 +203,7 @@ type supplyCommitTestHarness struct {
 	groupKey        *asset.GroupKey
 	batchedTreeDB   BatchedUniverseTree
 	commitTreeStore *SupplyTreeStore
+	baseDB          *BaseDB
 }
 
 // newSupplyCommitTestHarness creates a new test harness instance.
@@ -230,6 +233,7 @@ func newSupplyCommitTestHarness(t *testing.T) *supplyCommitTestHarness {
 		groupKey:        groupKey,
 		batchedTreeDB:   setup.commitTreeStore.db,
 		commitTreeStore: setup.commitTreeStore,
+		baseDB:          setup.baseDB,
 	}
 }
 

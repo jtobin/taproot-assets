@@ -20,6 +20,16 @@ func (q *Queries) DeleteSupplyCommitTransition(ctx context.Context, transitionID
 	return err
 }
 
+const DeleteSupplyCommitment = `-- name: DeleteSupplyCommitment :exec
+DELETE FROM supply_commitments
+WHERE commit_id = $1
+`
+
+func (q *Queries) DeleteSupplyCommitment(ctx context.Context, commitID int64) error {
+	_, err := q.db.ExecContext(ctx, DeleteSupplyCommitment, commitID)
+	return err
+}
+
 const DeleteSupplyUpdateEvent = `-- name: DeleteSupplyUpdateEvent :exec
 DELETE FROM supply_update_events
 WHERE event_id = $1
@@ -820,6 +830,40 @@ func (q *Queries) QuerySupplyCommitmentBySpentOutpoint(ctx context.Context, arg 
 	return i, err
 }
 
+const QuerySupplyCommitmentByTxid = `-- name: QuerySupplyCommitmentByTxid :one
+SELECT sc.commit_id, sc.group_key, sc.chain_txn_id, sc.output_index, sc.internal_key_id, sc.output_key, sc.block_header, sc.block_height, sc.merkle_proof, sc.supply_root_hash, sc.supply_root_sum, sc.spent_commitment
+FROM supply_commitments sc
+JOIN chain_txns ct
+    ON sc.chain_txn_id = ct.txn_id
+WHERE sc.group_key = $1
+    AND ct.txid = $2
+`
+
+type QuerySupplyCommitmentByTxidParams struct {
+	GroupKey []byte
+	Txid     []byte
+}
+
+func (q *Queries) QuerySupplyCommitmentByTxid(ctx context.Context, arg QuerySupplyCommitmentByTxidParams) (SupplyCommitment, error) {
+	row := q.db.QueryRowContext(ctx, QuerySupplyCommitmentByTxid, arg.GroupKey, arg.Txid)
+	var i SupplyCommitment
+	err := row.Scan(
+		&i.CommitID,
+		&i.GroupKey,
+		&i.ChainTxnID,
+		&i.OutputIndex,
+		&i.InternalKeyID,
+		&i.OutputKey,
+		&i.BlockHeader,
+		&i.BlockHeight,
+		&i.MerkleProof,
+		&i.SupplyRootHash,
+		&i.SupplyRootSum,
+		&i.SpentCommitment,
+	)
+	return i, err
+}
+
 const QuerySupplyCommitmentOutpoint = `-- name: QuerySupplyCommitmentOutpoint :one
 SELECT ct.txid, sc.output_index
 FROM supply_commitments AS sc
@@ -907,6 +951,17 @@ type SetSupplyUpdateEventKeyParams struct {
 // rows after column 000062 is added.
 func (q *Queries) SetSupplyUpdateEventKey(ctx context.Context, arg SetSupplyUpdateEventKeyParams) error {
 	_, err := q.db.ExecContext(ctx, SetSupplyUpdateEventKey, arg.EventKey, arg.EventID)
+	return err
+}
+
+const UnbindSupplyUpdateEvents = `-- name: UnbindSupplyUpdateEvents :exec
+UPDATE supply_update_events
+SET transition_id = NULL
+WHERE transition_id = $1
+`
+
+func (q *Queries) UnbindSupplyUpdateEvents(ctx context.Context, transitionID sql.NullInt64) error {
+	_, err := q.db.ExecContext(ctx, UnbindSupplyUpdateEvents, transitionID)
 	return err
 }
 

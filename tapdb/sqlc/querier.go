@@ -60,6 +60,7 @@ type Querier interface {
 	DeleteNode(ctx context.Context, arg DeleteNodeParams) (int64, error)
 	DeleteRoot(ctx context.Context, namespace string) (int64, error)
 	DeleteSupplyCommitTransition(ctx context.Context, transitionID int64) error
+	DeleteSupplyCommitment(ctx context.Context, commitID int64) error
 	// Deletes a single supply update event row identified by its
 	// event_id. Used by the migration 63 backfill to drop duplicate
 	// rows that hash to the same event_key as an earlier row.
@@ -294,6 +295,7 @@ type Querier interface {
 	QuerySupplyCommitment(ctx context.Context, commitID int64) (QuerySupplyCommitmentRow, error)
 	QuerySupplyCommitmentByOutpoint(ctx context.Context, arg QuerySupplyCommitmentByOutpointParams) (QuerySupplyCommitmentByOutpointRow, error)
 	QuerySupplyCommitmentBySpentOutpoint(ctx context.Context, arg QuerySupplyCommitmentBySpentOutpointParams) (QuerySupplyCommitmentBySpentOutpointRow, error)
+	QuerySupplyCommitmentByTxid(ctx context.Context, arg QuerySupplyCommitmentByTxidParams) (SupplyCommitment, error)
 	QuerySupplyCommitmentOutpoint(ctx context.Context, commitID int64) (QuerySupplyCommitmentOutpointRow, error)
 	QuerySupplyLeavesByHeight(ctx context.Context, arg QuerySupplyLeavesByHeightParams) ([]QuerySupplyLeavesByHeightRow, error)
 	QuerySupplyUpdateEvents(ctx context.Context, transitionID sql.NullInt64) ([]QuerySupplyUpdateEventsRow, error)
@@ -341,6 +343,7 @@ type Querier interface {
 	// convergence guard for re-applying a confirmation, and the target
 	// of compensation when the transfer is abandoned.
 	TransferOutputAssetID(ctx context.Context, arg TransferOutputAssetIDParams) (int64, error)
+	UnbindSupplyUpdateEvents(ctx context.Context, transitionID sql.NullInt64) error
 	// The inverse of ConfirmChainAnchorTx: the anchor transaction's
 	// recorded confirmation is withdrawn (its block was re-organized
 	// away and nothing has replaced it yet).
