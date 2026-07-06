@@ -52,6 +52,7 @@ import (
 	"github.com/lightninglabs/taproot-assets/tapgarden"
 	"github.com/lightninglabs/taproot-assets/tapnode"
 	"github.com/lightninglabs/taproot-assets/tappsbt"
+	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightninglabs/taproot-assets/taprpc"
 	wrpc "github.com/lightninglabs/taproot-assets/taprpc/assetwalletrpc"
 	"github.com/lightninglabs/taproot-assets/taprpc/mintrpc"
@@ -1827,6 +1828,75 @@ func (r *RPCServer) ListTransfers(ctx context.Context,
 	}
 
 	return resp, nil
+}
+
+// ListAnchorings lists the re-org watcher's speculative anchorings:
+// everything the daemon has staked on chain outcomes, the phase the
+// chain has assigned to each stake, and the delivery state of the
+// owning subsystem.
+func (r *RPCServer) ListAnchorings(ctx context.Context,
+	req *taprpc.ListAnchoringsRequest) (*taprpc.ListAnchoringsResponse,
+	error) {
+
+	if r.cfg.AnchoringRegistry == nil {
+		return nil, fmt.Errorf("anchoring registry not available")
+	}
+
+	anchorings, err := r.cfg.AnchoringRegistry.AllAnchorings(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to list anchorings: %w", err)
+	}
+
+	resp := &taprpc.ListAnchoringsResponse{}
+	for _, anchoring := range anchorings {
+		if req.Site != "" &&
+			string(anchoring.Site) != req.Site {
+
+			continue
+		}
+		if req.StuckOnly && !anchoring.Stuck {
+			continue
+		}
+
+		rpcAnchoring := marshalAnchoring(anchoring)
+		if req.Phase != "" && !strings.HasPrefix(
+			rpcAnchoring.Phase, req.Phase,
+		) {
+
+			continue
+		}
+
+		resp.Anchorings = append(resp.Anchorings, rpcAnchoring)
+	}
+
+	return resp, nil
+}
+
+// marshalAnchoring renders an anchoring for the RPC surface.
+func marshalAnchoring(anchoring *tapreorg.Anchoring) *taprpc.Anchoring {
+	var witnessTxid []byte
+	switch phase := anchoring.Phase.(type) {
+	case tapreorg.Witnessed:
+		hash := phase.W.TxHash()
+		witnessTxid = hash.CloneBytes()
+
+	case tapreorg.Buried:
+		hash := phase.W.TxHash()
+		witnessTxid = hash.CloneBytes()
+	}
+
+	return &taprpc.Anchoring{
+		Id:               int64(anchoring.ID),
+		Site:             string(anchoring.Site),
+		Phase:            anchoring.Phase.String(),
+		DeliveredPhase:   anchoring.DeliveredPhase.String(),
+		Threshold:        anchoring.Threshold,
+		CreatedHeight:    anchoring.CreatedHeight,
+		Stuck:            anchoring.Stuck,
+		DeliveryAttempts: anchoring.DeliveryAttempts,
+		WitnessTxid:      witnessTxid,
+		NumCandidates:    uint32(len(anchoring.Spends)),
+	}
 }
 
 // QueryAddrs queries the set of Taproot Asset addresses stored in the database.

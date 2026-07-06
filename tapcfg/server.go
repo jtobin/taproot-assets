@@ -421,6 +421,25 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 		ErrChan:   mainErrChan,
 	})
 
+	// The righteous watcher runs alongside the legacy one until
+	// every site has migrated onto it. Its registry advances run
+	// site handlers in the same transaction, so its executor is
+	// instantiated at the full generated query set.
+	reorgRegistryDB := tapdb.NewTransactionExecutor(
+		db, func(tx *sql.Tx) *sqlc.Queries {
+			return db.WithTx(tx)
+		},
+	)
+	anchoringRegistry := tapdb.NewReorgRegistryStore(
+		reorgRegistryDB, defaultClock,
+	)
+	anchoringWatcher := tapreorg.NewWatcher(&tapreorg.WatcherConfig{
+		Notifier: chainBridge,
+		Registry: anchoringRegistry,
+		Clock:    defaultClock,
+		ErrChan:  mainErrChan,
+	})
+
 	uniArchive := universe.NewArchive(uniArchiveCfg)
 
 	universeSyncer := universe.NewSimpleSyncer(universe.SimpleSyncCfg{
@@ -805,19 +824,21 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 		Lnd:                   lndServices,
 		ChainParams:           tapChainParams,
 		ReOrgWatcher:          reOrgWatcher,
+		AnchoringWatcher:      anchoringWatcher,
+		AnchoringRegistry:     anchoringRegistry,
 		AssetMinter: tapgarden.NewChainPlanter(tapgarden.PlanterConfig{
 			// nolint: lll
 			GardenKit: tapgarden.GardenKit{
-				Wallet:                walletAnchor,
-				ChainBridge:           chainBridge,
-				BatchStore:            assetMintingStore,
-				MintingRefs:           assetMintingStore,
-				TreeStore:             assetMintingStore,
-				KeyRing:               keyRing,
-				GenSigner:             virtualTxSigner,
-				GenTxBuilder:          &tapscript.GroupTxBuilder{},
-				TxValidator:           &tap.ValidatorV0{},
-				ProofFiles: proofFileStore,
+				Wallet:       walletAnchor,
+				ChainBridge:  chainBridge,
+				BatchStore:   assetMintingStore,
+				MintingRefs:  assetMintingStore,
+				TreeStore:    assetMintingStore,
+				KeyRing:      keyRing,
+				GenSigner:    virtualTxSigner,
+				GenTxBuilder: &tapscript.GroupTxBuilder{},
+				TxValidator:  &tap.ValidatorV0{},
+				ProofFiles:   proofFileStore,
 				MintProofPublisher: mintpublish.NewPublisher(
 					universeFederation,
 					defaultUniverseSyncBatchSize,

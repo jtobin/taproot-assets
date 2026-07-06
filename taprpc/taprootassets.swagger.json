@@ -170,6 +170,52 @@
         ]
       }
     },
+    "/v1/taproot-assets/anchorings": {
+      "get": {
+        "summary": "tapcli: `anchorings`\nListAnchorings lists the re-org watcher's speculative anchorings:\neverything the daemon has staked on chain outcomes, the phase the\nchain has assigned to each stake, and the delivery state of the\nowning subsystem.",
+        "operationId": "TaprootAssets_ListAnchorings",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/taprpcListAnchoringsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "site",
+            "description": "Only return anchorings registered by this site, when set.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "phase",
+            "description": "Only return anchorings whose sensed phase has this name, when\nset: one of unwitnessed, witnessed, conflicted, buried,\nabandoned, withdrawn.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "stuck_only",
+            "description": "Only return anchorings whose delivery is flagged stuck.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "TaprootAssets"
+        ]
+      }
+    },
     "/v1/taproot-assets/assets": {
       "get": {
         "summary": "tapcli: `assets list`\nListAssets lists the set of assets owned by the target daemon.",
@@ -1709,6 +1755,57 @@
         }
       }
     },
+    "taprpcAnchoring": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "int64",
+          "description": "The registry-assigned identifier."
+        },
+        "site": {
+          "type": "string",
+          "description": "The owning site."
+        },
+        "phase": {
+          "type": "string",
+          "description": "The sensed phase: the registry's derived truth, with its\nevidence summarized."
+        },
+        "delivered_phase": {
+          "type": "string",
+          "description": "The phase the owning site last durably acknowledged. The site\nis converged when this equals the sensed phase."
+        },
+        "threshold": {
+          "type": "integer",
+          "format": "int64",
+          "description": "The confirmation depth at which this anchoring is\nact-confirmed."
+        },
+        "created_height": {
+          "type": "integer",
+          "format": "int64",
+          "description": "The best height at registration time."
+        },
+        "stuck": {
+          "type": "boolean",
+          "description": "Whether delivery has failed repeatedly; retries continue\nregardless."
+        },
+        "delivery_attempts": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Failed delivery attempts since the last successful delivery."
+        },
+        "witness_txid": {
+          "type": "string",
+          "format": "byte",
+          "description": "The current witness transaction, when witnessed or buried."
+        },
+        "num_candidates": {
+          "type": "integer",
+          "format": "int64",
+          "description": "The number of candidate spends observed for the trigger set."
+        }
+      }
+    },
     "taprpcAsset": {
       "type": "object",
       "properties": {
@@ -2524,6 +2621,19 @@
           "type": "integer",
           "format": "int32",
           "description": "The precise index of the key being identified."
+        }
+      }
+    },
+    "taprpcListAnchoringsResponse": {
+      "type": "object",
+      "properties": {
+        "anchorings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/taprpcAnchoring"
+          },
+          "description": "The matching anchorings."
         }
       }
     },
