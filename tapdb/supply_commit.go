@@ -136,6 +136,18 @@ type SupplyCommitStore interface {
 		ctx context.Context, arg SupplyCommitMachineParams,
 	) (sqlc.UpsertSupplyCommitStateMachineRow, error)
 
+	// QuerySupplyCommitmentByTxid fetches a supply commitment by its
+	// group key and commit transaction ID.
+	QuerySupplyCommitmentByTxid(ctx context.Context,
+		arg sqlc.QuerySupplyCommitmentByTxidParams) (SupplyCommitment,
+		error)
+
+	// QuerySupplyCommitTransitionByNewCommitment fetches the
+	// transition that created the given commitment.
+	QuerySupplyCommitTransitionByNewCommitment(ctx context.Context,
+		newCommitmentID sql.NullInt64) (
+		sqlc.QuerySupplyCommitTransitionByNewCommitmentRow, error)
+
 	// QueryPendingSupplyCommitTransition fetches the latest non-finalized
 	// transition for a group key.
 	QueryPendingSupplyCommitTransition(ctx context.Context,

@@ -292,6 +292,7 @@ type Querier interface {
 	QueryStartingSupplyCommitment(ctx context.Context, groupKey []byte) (QueryStartingSupplyCommitmentRow, error)
 	QuerySupersededTransferIDs(ctx context.Context) ([]int64, error)
 	QuerySupplyCommitStateMachine(ctx context.Context, groupKey []byte) (QuerySupplyCommitStateMachineRow, error)
+	QuerySupplyCommitTransitionByNewCommitment(ctx context.Context, newCommitmentID sql.NullInt64) (QuerySupplyCommitTransitionByNewCommitmentRow, error)
 	QuerySupplyCommitment(ctx context.Context, commitID int64) (QuerySupplyCommitmentRow, error)
 	QuerySupplyCommitmentByOutpoint(ctx context.Context, arg QuerySupplyCommitmentByOutpointParams) (QuerySupplyCommitmentByOutpointRow, error)
 	QuerySupplyCommitmentBySpentOutpoint(ctx context.Context, arg QuerySupplyCommitmentBySpentOutpointParams) (QuerySupplyCommitmentBySpentOutpointRow, error)

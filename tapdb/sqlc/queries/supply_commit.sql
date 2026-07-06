@@ -351,3 +351,8 @@ WHERE transition_id = @transition_id;
 -- name: DeleteSupplyCommitment :exec
 DELETE FROM supply_commitments
 WHERE commit_id = @commit_id;
+
+-- name: QuerySupplyCommitTransitionByNewCommitment :one
+SELECT sqlc.embed(t)
+FROM supply_commit_transitions t
+WHERE t.new_commitment_id = @new_commitment_id;

@@ -830,25 +830,33 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 		return nil, fmt.Errorf("unable to register mint publish "+
 			"handler: %w", err)
 	}
-	err = anchoringWatcher.RegisterSite(&supplycommit.SupplySite{})
+	err = anchoringWatcher.RegisterSite(&supplycommit.SupplySite{
+		Log: supplyCommitStore,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to register supply site: %w",
 			err)
 	}
+	commitPushCfg := supplycommit.CommitPushCfg{
+		Log:         supplyCommitStore,
+		Syncer:      &supplySyncer,
+		AssetLookup: tapdbAddrBook,
+		IgnoreCache: ignoreChecker,
+		Manager:     supplyCommitManager,
+	}
 	err = anchoringWatcher.RegisterEffectHandler(
-		supplycommit.CommitFinalizeEffectKind,
+		supplycommit.CommitPushEffectKind,
 		func(ctx context.Context,
 			id fn.Option[tapreorg.AnchoringID],
 			payload tapreorg.VersionedBlob) error {
 
-			return supplycommit.DispatchCommitFinalize(
-				ctx, anchoringWatcher, chainBridge,
-				supplyCommitManager, id, payload,
+			return supplycommit.DispatchCommitPush(
+				ctx, commitPushCfg, id, payload,
 			)
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("unable to register commit finalize "+
+		return nil, fmt.Errorf("unable to register commit push "+
 			"handler: %w", err)
 	}
 

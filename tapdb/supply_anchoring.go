@@ -266,3 +266,119 @@ func setSupplyStateMachineState(ctx context.Context, q *sqlc.Queries,
 
 	return nil
 }
+
+// FetchCommitmentPushData loads everything the push dispatcher needs
+// about a finalized commitment from the durable record: the root
+// commitment (with its chain-transaction context), the update events
+// the finalized transition committed, and the chain proof written at
+// finalization.
+func (s *SupplyCommitMachine) FetchCommitmentPushData(ctx context.Context,
+	groupKey *btcec.PublicKey, commitTxid chainhash.Hash) (
+	supplycommit.RootCommitment, []supplycommit.SupplyUpdateEvent,
+	supplycommit.ChainProof, error) {
+
+	var (
+		groupKeyBytes = schnorr.SerializePubKey(groupKey)
+		commitment    supplycommit.RootCommitment
+		updates       []supplycommit.SupplyUpdateEvent
+		chainProof    supplycommit.ChainProof
+	)
+
+	readTx := ReadTxOption()
+	err := s.db.ExecTx(ctx, readTx, func(db SupplyCommitStore) error {
+		commitRow, err := db.QuerySupplyCommitmentByTxid(
+			ctx, sqlc.QuerySupplyCommitmentByTxidParams{
+				GroupKey: groupKeyBytes,
+				Txid:     commitTxid[:],
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to query commitment for "+
+				"tx %v: %w", commitTxid, err)
+		}
+
+		commitOpt, err := fetchCommitment(
+			ctx, db, sqlInt64(commitRow.CommitID),
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch commitment: %w",
+				err)
+		}
+		commit, err := commitOpt.UnwrapOrErr(
+			fmt.Errorf("commitment %d vanished mid-transaction",
+				commitRow.CommitID),
+		)
+		if err != nil {
+			return err
+		}
+		commitment = commit
+
+		// The chain proof is written exactly once, at finalization;
+		// its absence means the push was dispatched for a commitment
+		// that was never finalized.
+		var haveProof bool
+		commitment.CommitmentBlock.WhenSome(
+			func(b supplycommit.CommitmentBlock) {
+				if b.BlockHeader == nil ||
+					b.MerkleProof == nil {
+
+					return
+				}
+				chainProof = supplycommit.ChainProof{
+					Header:      *b.BlockHeader,
+					BlockHeight: b.Height,
+					MerkleProof: *b.MerkleProof,
+					TxIndex:     b.TxIndex,
+				}
+				haveProof = true
+			},
+		)
+		if !haveProof {
+			return fmt.Errorf("commitment %v has no chain proof",
+				commitTxid)
+		}
+
+		transitionRow, err :=
+			db.QuerySupplyCommitTransitionByNewCommitment(
+				ctx, sqlInt64(commitRow.CommitID),
+			)
+		if err != nil {
+			return fmt.Errorf("unable to query transition for "+
+				"commitment %d: %w", commitRow.CommitID, err)
+		}
+		dbTransition := transitionRow.SupplyCommitTransition
+
+		eventRows, err := db.QuerySupplyUpdateEvents(
+			ctx, sqlInt64(dbTransition.TransitionID),
+		)
+		if err != nil {
+			return fmt.Errorf("unable to query update events: "+
+				"%w", err)
+		}
+		updates = make(
+			[]supplycommit.SupplyUpdateEvent, 0, len(eventRows),
+		)
+		for _, eventRow := range eventRows {
+			event, err := deserializeSupplyUpdateEvent(
+				eventRow.UpdateTypeName,
+				bytes.NewReader(eventRow.EventData),
+			)
+			if err != nil {
+				return fmt.Errorf("unable to deserialize "+
+					"update event: %w", err)
+			}
+			updates = append(updates, event)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return commitment, nil, chainProof, err
+	}
+
+	return commitment, updates, chainProof, nil
+}
+
+// A compile-time assertion that the supply-commit store provides the
+// supply site's persistence surface.
+var _ supplycommit.SupplyAnchoringLog = (*SupplyCommitMachine)(nil)

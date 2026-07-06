@@ -3,13 +3,14 @@ package supplycommit
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/taproot-assets/asset"
 	"github.com/lightninglabs/taproot-assets/fn"
-	"github.com/lightninglabs/taproot-assets/tapnode"
+	"github.com/lightninglabs/taproot-assets/tapdb/sqlc"
 	"github.com/lightninglabs/taproot-assets/tapreorg"
 )
 
@@ -18,15 +19,13 @@ const (
 	// re-org watcher site.
 	SupplySiteID tapreorg.SiteID = "supplycommit.committer"
 
-	// CommitFinalizeEffectKind is the outbox effect kind under which
-	// a buried supply commitment's finalize event is dispatched into
-	// the state machine. Finalization persists the new commitment
-	// root and pushes it to remote universes — an irrevocable
-	// assertion to receivers that re-check nothing — so it is
-	// act-gated: the machine sits in its broadcast state until the
-	// commit transaction is buried.
-	CommitFinalizeEffectKind tapreorg.EffectKind = "supplycommit." +
-		"finalize"
+	// CommitPushEffectKind is the outbox effect kind under which a
+	// finalized supply commitment is pushed to the remote universes.
+	// The push is an irrevocable assertion to receivers that re-check
+	// nothing, so it is act-gated: it is enqueued only by the burial
+	// handler, after finalization has been committed locally in the
+	// same delivery transaction.
+	CommitPushEffectKind tapreorg.EffectKind = "supplycommit.push"
 
 	// supplyBlobVersion versions the supply site's anchoring blobs.
 	supplyBlobVersion = 1
@@ -73,15 +72,47 @@ func decodeSupplyBlob(blob tapreorg.VersionedBlob) (supplyBlob, error) {
 	return out, nil
 }
 
+// SupplyAnchoringLog is the supply site's persistence surface,
+// implemented by the tapdb supply-commit store. The q-scoped methods
+// run inside the re-org watcher's delivery transaction; the fetch
+// runs in its own read transaction, from the push dispatcher.
+type SupplyAnchoringLog interface {
+	// ApplyCommitFinalize finalizes the pending transition whose
+	// commitment transaction is commitTxid, reconstructing it from
+	// durable state and the given chain proof. Convergent.
+	ApplyCommitFinalize(ctx context.Context, q *sqlc.Queries,
+		groupKey *btcec.PublicKey, commitTxid chainhash.Hash,
+		chainProof ChainProof) error
+
+	// ApplyCommitAbandonment compensates a commitment the chain
+	// decided against: the pending transition is removed and its
+	// updates re-enter the pipeline. Convergent.
+	ApplyCommitAbandonment(ctx context.Context, q *sqlc.Queries,
+		groupKey *btcec.PublicKey, commitTxid chainhash.Hash) error
+
+	// FetchCommitmentPushData loads everything the push dispatcher
+	// needs about a finalized commitment: the root commitment, the
+	// update events it committed, and its chain proof.
+	FetchCommitmentPushData(ctx context.Context,
+		groupKey *btcec.PublicKey, commitTxid chainhash.Hash) (
+		RootCommitment, []SupplyUpdateEvent, ChainProof, error)
+}
+
 // SupplySite is the supply-commit state machine's re-org watcher
-// site. It is the purest defer-until-buried site: nothing is
-// persisted or emitted before burial, so the potency-tier handlers
-// have nothing to converge, burial enqueues the finalize event, and
-// abandonment has nothing to compensate — it is surfaced loudly for
-// the operator, since it means the commitment's own inputs (prior
-// commitment or pre-commitments, which only this daemon controls)
-// were claimed by a buried conflicting transaction.
-type SupplySite struct{}
+// site. Nothing is persisted or emitted before burial, so the
+// potency-tier handlers have nothing to converge. Burial performs
+// finalization — the same act the legacy machine runs in its finalize
+// state — inside the delivery transaction, from durable state alone,
+// and act-gates the remote-universe push behind the transactional
+// outbox. Abandonment compensates by returning the transition's
+// updates to the pipeline, and is surfaced loudly for the operator,
+// since it means the commitment's own inputs (prior commitment or
+// pre-commitments, which only this daemon controls) were claimed by a
+// buried conflicting transaction.
+type SupplySite struct {
+	// Log is the persistence surface for the site's handlers.
+	Log SupplyAnchoringLog
+}
 
 // ID returns the site's stable identifier.
 func (s *SupplySite) ID() tapreorg.SiteID {
@@ -133,33 +164,121 @@ func (s *SupplySite) OnConflicted(_ context.Context, _ tapreorg.RegistryTx,
 	return nil
 }
 
-// OnBuried enqueues the finalize event: the commit transaction is
-// act-confirmed, so the machine may persist the new root and push it
-// to remote universes.
+// OnBuried finalizes the commitment: the commit transaction is
+// act-confirmed, so the pending transition is applied to the durable
+// supply trees inside this delivery transaction, with the chain proof
+// taken from the anchoring's enriched witness. The remote-universe
+// push rides the transactional outbox behind the same commit.
 func (s *SupplySite) OnBuried(ctx context.Context, tx tapreorg.RegistryTx,
 	anchoring *tapreorg.Anchoring) error {
 
+	blob, err := decodeSupplyBlob(anchoring.Payload)
+	if err != nil {
+		return err
+	}
+	groupKey, err := btcec.ParsePubKey(blob.GroupKey[:])
+	if err != nil {
+		return fmt.Errorf("unable to parse group key: %w", err)
+	}
+
+	witness, err := supplyWitnessContext(anchoring)
+	if err != nil {
+		return err
+	}
+	chainProof := ChainProof{
+		Header:      *witness.BlockHeader,
+		BlockHeight: witness.W.Height(),
+		MerkleProof: *witness.MerkleProof,
+		TxIndex:     witness.W.TxIndex(),
+	}
+
+	err = s.Log.ApplyCommitFinalize(
+		ctx, tx.Queries(), groupKey, blob.CommitTxid, chainProof,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to finalize commitment: %w", err)
+	}
+
 	return tx.EnqueueEffect(ctx, tapreorg.OutboxEffect{
-		Kind:      CommitFinalizeEffectKind,
+		Kind:      CommitPushEffectKind,
 		Anchoring: fn.Some(anchoring.ID),
 		Payload:   anchoring.Payload,
 	})
 }
 
-// OnAbandoned surfaces the loss: nothing was persisted or emitted, so
-// there is nothing to compensate, but the machine is now stalled in
-// its broadcast state on a transaction the chain has decided against.
-// That can only happen when this daemon's own inputs were spent out
-// from under it, which no automated compensation can honestly
-// resolve; the anchoring registry documents the condition for the
-// operator.
-func (s *SupplySite) OnAbandoned(_ context.Context, _ tapreorg.RegistryTx,
+// supplyWitnessContext extracts the buried phase's witness candidate
+// with its block enrichment.
+func supplyWitnessContext(
+	anchoring *tapreorg.Anchoring) (*tapreorg.CandidateSpend, error) {
+
+	var witness tapreorg.Witness
+	switch p := anchoring.Phase.(type) {
+	case tapreorg.Witnessed:
+		witness = p.W
+
+	case tapreorg.Buried:
+		witness = p.W
+
+	default:
+		return nil, fmt.Errorf("no witness in phase %v",
+			anchoring.Phase)
+	}
+
+	for idx := range anchoring.Spends {
+		candidate := &anchoring.Spends[idx]
+		if candidate.W.TxHash() != witness.TxHash() {
+			continue
+		}
+		if candidate.BlockHeader == nil ||
+			candidate.MerkleProof == nil {
+
+			return nil, fmt.Errorf("witness %v lacks block "+
+				"enrichment", witness.TxHash())
+		}
+
+		enriched := *candidate
+		enriched.W = witness
+
+		return &enriched, nil
+	}
+
+	return nil, fmt.Errorf("witness %v not among candidates",
+		witness.TxHash())
+}
+
+// OnAbandoned compensates the loss: the pending transition and its
+// never-confirmed commitment are removed, and the transition's supply
+// updates return to the pipeline to be recommitted by a future cycle.
+// The condition is still surfaced loudly — the commitment's own
+// inputs (prior commitment or pre-commitments, which only this daemon
+// controls) were claimed by a buried conflicting transaction, so the
+// next cycle may fail at transaction creation, and the operator
+// should know why.
+func (s *SupplySite) OnAbandoned(ctx context.Context, tx tapreorg.RegistryTx,
 	anchoring *tapreorg.Anchoring) error {
 
-	log.Errorf("Supply commit anchoring %d ABANDONED: the commitment "+
-		"transaction's inputs were claimed by a buried conflicting "+
-		"transaction; the supply-commit state machine for this "+
-		"group requires operator attention", anchoring.ID)
+	blob, err := decodeSupplyBlob(anchoring.Payload)
+	if err != nil {
+		return err
+	}
+	groupKey, err := btcec.ParsePubKey(blob.GroupKey[:])
+	if err != nil {
+		return fmt.Errorf("unable to parse group key: %w", err)
+	}
+
+	err = s.Log.ApplyCommitAbandonment(
+		ctx, tx.Queries(), groupKey, blob.CommitTxid,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to compensate abandoned "+
+			"commitment: %w", err)
+	}
+
+	log.Errorf("Supply commit anchoring %d ABANDONED: commitment tx "+
+		"%v was foreclosed by a buried conflicting transaction; its "+
+		"supply updates have been returned to the pipeline, but the "+
+		"group's commitment inputs may be gone — operator attention "+
+		"required", anchoring.ID, blob.CommitTxid)
 
 	return nil
 }
@@ -267,62 +386,111 @@ func registerCommitAnchoring(ctx context.Context, env *Environment,
 	return nil
 }
 
-// DispatchCommitFinalize is the outbox dispatch handler for a buried
-// commitment: it reconstructs the confirmation event from the
-// anchoring's witness (fetching the full block, which the machine's
-// finalize path needs for its merkle proof) and sends it into the
-// group's state machine. Idempotent — a machine past its broadcast
-// state ignores stray confirmation events.
-func DispatchCommitFinalize(ctx context.Context,
-	watcher *tapreorg.Watcher, chain tapnode.ChainBridge,
-	manager *Manager, anchoringID fn.Option[tapreorg.AnchoringID],
+// CommitPushCfg carries the push dispatcher's dependencies.
+type CommitPushCfg struct {
+	// Log is the durable record the push is rebuilt from.
+	Log SupplyAnchoringLog
+
+	// Syncer pushes commitments to the remote universes.
+	Syncer SupplySyncer
+
+	// AssetLookup resolves the group's canonical universe list.
+	AssetLookup AssetLookup
+
+	// IgnoreCache, if set, is invalidated when the finalized
+	// commitment included ignore updates.
+	IgnoreCache IgnoreCheckerCache
+
+	// Manager, if set, is nudged with a tick after finalization so a
+	// resting state machine re-derives its position from the durable
+	// record. The nudge is a pure hint: its loss is repaired by the
+	// next event, so nudge errors are logged, not returned.
+	Manager *Manager
+}
+
+// DispatchCommitPush is the outbox dispatch handler for a finalized
+// commitment: it rebuilds the commitment, its supply leaves and its
+// chain proof from the database — no in-memory state crosses the
+// boundary — and pushes them to the group's canonical universes.
+// Idempotent, so outbox redelivery is safe.
+func DispatchCommitPush(ctx context.Context, cfg CommitPushCfg,
+	_ fn.Option[tapreorg.AnchoringID],
 	payload tapreorg.VersionedBlob) error {
 
 	blob, err := decodeSupplyBlob(payload)
 	if err != nil {
 		return err
 	}
-
-	id, err := anchoringID.UnwrapOrErr(fmt.Errorf("finalize effect "+
-		"lacks an anchoring: %v", blob.CommitTxid))
-	if err != nil {
-		return err
-	}
-
-	anchoring, err := watcher.Anchoring(ctx, id)
-	if err != nil {
-		return err
-	}
-
-	var witness *tapreorg.Witness
-	switch phase := anchoring.Phase.(type) {
-	case tapreorg.Buried:
-		witness = &phase.W
-
-	case tapreorg.Witnessed:
-		witness = &phase.W
-
-	default:
-		return fmt.Errorf("anchoring %d has no witness in phase %v",
-			id, anchoring.Phase)
-	}
-
-	block, err := chain.GetBlock(ctx, witness.BlockHash())
-	if err != nil {
-		return fmt.Errorf("unable to fetch witness block: %w", err)
-	}
-
 	groupKey, err := btcec.ParsePubKey(blob.GroupKey[:])
 	if err != nil {
 		return fmt.Errorf("unable to parse group key: %w", err)
 	}
+	assetSpec := asset.NewSpecifierFromGroupKey(*groupKey)
 
-	return manager.SendEvent(
-		ctx, asset.NewSpecifierFromGroupKey(*groupKey), &ConfEvent{
-			Tx:          witness.Tx(),
-			TxIndex:     witness.TxIndex(),
-			BlockHeight: witness.Height(),
-			Block:       block,
+	// Nudge the resting state machine first: finalization is already
+	// durable, and the machine's next cycle does not depend on the
+	// push below succeeding.
+	if cfg.Manager != nil {
+		err := cfg.Manager.SendEvent(ctx, assetSpec, &CommitTickEvent{})
+		if err != nil {
+			log.Warnf("Unable to nudge supply commit machine "+
+				"for group %x: %v", blob.GroupKey, err)
+		}
+	}
+
+	commitment, updates, chainProof, err := cfg.Log.FetchCommitmentPushData(
+		ctx, groupKey, blob.CommitTxid,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to load push data: %w", err)
+	}
+
+	// The finalized commitment updated the durable trees, so the
+	// ignore checker's negative cache must be flushed before remote
+	// parties can observe the new state.
+	hasIgnoreUpdates := fn.Any(
+		updates, func(u SupplyUpdateEvent) bool {
+			return u.SupplySubTreeType() == IgnoreTreeType
 		},
 	)
+	if hasIgnoreUpdates && cfg.IgnoreCache != nil {
+		cfg.IgnoreCache.InvalidateCache(*groupKey)
+	}
+
+	metadata, err := FetchLatestAssetMetadata(
+		ctx, cfg.AssetLookup, assetSpec,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to fetch latest asset "+
+			"metadata: %w", err)
+	}
+	canonicalUniverses := metadata.CanonicalUniverses.UnwrapOr(
+		[]url.URL{},
+	)
+
+	supplyLeaves, err := NewSupplyLeavesFromEvents(updates)
+	if err != nil {
+		return fmt.Errorf("unable to create supply leaves: %w", err)
+	}
+
+	serverErrors, err := cfg.Syncer.PushSupplyCommitment(
+		ctx, assetSpec, commitment, supplyLeaves, chainProof,
+		canonicalUniverses,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to push supply commitment: %w", err)
+	}
+
+	// Log any per-server errors but continue with the operation.
+	//
+	// TODO(ffranr): Handle the case where we fail to push to
+	//  all servers. Also, if push fails because of
+	//  ErrPrevCommitmentNotFound then we need to sync older
+	//  commitments first.
+	for serverHost, serverErr := range serverErrors {
+		log.Warnf("Failed to push supply commitment to server "+
+			"%s: %v", serverHost, serverErr)
+	}
+
+	return nil
 }
