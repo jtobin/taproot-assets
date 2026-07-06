@@ -484,6 +484,32 @@ func (q *Queries) QueryLastEventHeight(ctx context.Context, version int16) (int6
 	return last_height, err
 }
 
+const ResetAddrEventsByAnchorTx = `-- name: ResetAddrEventsByAnchorTx :execrows
+UPDATE addr_events
+SET status = $1
+WHERE chain_txn_id IN (
+    SELECT txn_id FROM chain_txns WHERE txid = $2
+)
+`
+
+type ResetAddrEventsByAnchorTxParams struct {
+	NewStatus int16
+	Txid      []byte
+}
+
+// The receive-side inverse of event completion: the anchor
+// transaction the events were keyed to was decided against by the
+// chain, so the events return to the given (pre-completion) status.
+// Their expected-output rows (addr_event_outputs) stand: they
+// describe the address's expectation, not materialized state.
+func (q *Queries) ResetAddrEventsByAnchorTx(ctx context.Context, arg ResetAddrEventsByAnchorTxParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, ResetAddrEventsByAnchorTx, arg.NewStatus, arg.Txid)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const SetAddrManaged = `-- name: SetAddrManaged :exec
 WITH target_addr(addr_id) AS (
     SELECT id

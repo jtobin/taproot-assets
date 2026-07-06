@@ -734,9 +734,29 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 		},
 	)
 
-	// The porter runs as a site on the anchoring watcher: its
-	// handlers, delivery nudges and act-gated burn dispatch are all
-	// registered before the watcher starts.
+	assetCustodian := tapcustody.NewCustodian(&tapcustody.Config{
+		ChainParams:            &tapChainParams,
+		WalletAnchor:           walletAnchor,
+		ChainBridge:            chainBridge,
+		GroupVerifier:          groupVerifier,
+		AddrBook:               addrBook,
+		Signer:                 lndServices.Signer,
+		ProofArchive:           proofArchive,
+		ProofNotifier:          multiNotifier,
+		ErrChan:                mainErrChan,
+		ProofCourierDispatcher: proofCourierDispatcher,
+		MboxBackoffCfg:         cfg.UniverseRpcCourier.BackoffCfg,
+		ProofRetrievalDelay:    cfg.CustodianProofRetrievalDelay,
+		ProofWatcher:           reOrgWatcher,
+		IgnoreChecker:          ignoreCheckerOpt,
+		AnchoringWatcher:       anchoringWatcher,
+		AnchoringLog:           assetStore,
+		AnchoringThreshold:     uint32(cfg.ReOrgSafeDepth),
+	})
+
+	// The porter and the receive side run as sites on the anchoring
+	// watcher: their handlers, delivery nudges and act-gated burn
+	// dispatch are all registered before the watcher starts.
 	err = anchoringWatcher.RegisterSite(chainPorter.AnchoringSite())
 	if err != nil {
 		return nil, fmt.Errorf("unable to register porter site: %w",
@@ -752,6 +772,11 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 	if err != nil {
 		return nil, fmt.Errorf("unable to register burn effect "+
 			"handler: %w", err)
+	}
+	err = anchoringWatcher.RegisterSite(assetCustodian.AnchoringSite())
+	if err != nil {
+		return nil, fmt.Errorf("unable to register receive site: %w",
+			err)
 	}
 
 	auxFundingController := tapchannel.NewFundingController(
@@ -882,22 +907,7 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 			ProofUpdates: proofArchive,
 			ErrChan:      mainErrChan,
 		}),
-		AssetCustodian: tapcustody.NewCustodian(&tapcustody.Config{
-			ChainParams:            &tapChainParams,
-			WalletAnchor:           walletAnchor,
-			ChainBridge:            chainBridge,
-			GroupVerifier:          groupVerifier,
-			AddrBook:               addrBook,
-			Signer:                 lndServices.Signer,
-			ProofArchive:           proofArchive,
-			ProofNotifier:          multiNotifier,
-			ErrChan:                mainErrChan,
-			ProofCourierDispatcher: proofCourierDispatcher,
-			MboxBackoffCfg:         cfg.UniverseRpcCourier.BackoffCfg,
-			ProofRetrievalDelay:    cfg.CustodianProofRetrievalDelay,
-			ProofWatcher:           reOrgWatcher,
-			IgnoreChecker:          ignoreCheckerOpt,
-		}),
+		AssetCustodian:           assetCustodian,
 		ChainBridge:              chainBridge,
 		AddrBook:                 addrBook,
 		AddrBookDisableSyncer:    cfg.AddrBook.DisableSyncer,

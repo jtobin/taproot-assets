@@ -17,6 +17,10 @@ type Querier interface {
 	AnchorGenesisPoint(ctx context.Context, arg AnchorGenesisPointParams) error
 	AnchorPendingAssets(ctx context.Context, arg AnchorPendingAssetsParams) error
 	ApplyPendingOutput(ctx context.Context, arg ApplyPendingOutputParams) (int64, error)
+	// The assets anchored in outputs of the given transaction: managed
+	// UTXO outpoints are stored as txid || big-endian index, so a prefix
+	// match on the txid finds every output of the transaction.
+	AssetIDsByAnchorTxPrefix(ctx context.Context, txid []byte) ([]int64, error)
 	// The proof blob keyed by the asset's primary key (not the BIPS
 	// asset ID), as needed when compensating passive re-anchors.
 	AssetProofBlobByAssetID(ctx context.Context, assetID int64) ([]byte, error)
@@ -303,6 +307,12 @@ type Querier interface {
 	ReAnchorPassiveAssets(ctx context.Context, arg ReAnchorPassiveAssetsParams) error
 	RecordReorgDeliveryFailure(ctx context.Context, arg RecordReorgDeliveryFailureParams) error
 	RecordReorgEffectFailure(ctx context.Context, arg RecordReorgEffectFailureParams) error
+	// The receive-side inverse of event completion: the anchor
+	// transaction the events were keyed to was decided against by the
+	// chain, so the events return to the given (pre-completion) status.
+	// Their expected-output rows (addr_event_outputs) stand: they
+	// describe the address's expectation, not materialized state.
+	ResetAddrEventsByAnchorTx(ctx context.Context, arg ResetAddrEventsByAnchorTxParams) (int64, error)
 	// The inverse of ReAnchorPassiveAssets: restore the anchor UTXO and
 	// the spend-template fields that the re-anchor reset.
 	RestoreAssetSpendTemplate(ctx context.Context, arg RestoreAssetSpendTemplateParams) error

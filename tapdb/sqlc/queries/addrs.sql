@@ -240,3 +240,15 @@ JOIN chain_txns
 JOIN addrs
     ON addr_events.addr_id = addrs.id
 WHERE addrs.version = $1;
+
+-- name: ResetAddrEventsByAnchorTx :execrows
+-- The receive-side inverse of event completion: the anchor
+-- transaction the events were keyed to was decided against by the
+-- chain, so the events return to the given (pre-completion) status.
+-- Their expected-output rows (addr_event_outputs) stand: they
+-- describe the address's expectation, not materialized state.
+UPDATE addr_events
+SET status = @new_status
+WHERE chain_txn_id IN (
+    SELECT txn_id FROM chain_txns WHERE txid = @txid
+);

@@ -67,6 +67,40 @@ func (q *Queries) ApplyPendingOutput(ctx context.Context, arg ApplyPendingOutput
 	return asset_id, err
 }
 
+const AssetIDsByAnchorTxPrefix = `-- name: AssetIDsByAnchorTxPrefix :many
+SELECT assets.asset_id
+FROM assets
+JOIN managed_utxos utxos
+  ON assets.anchor_utxo_id = utxos.utxo_id
+WHERE substr(utxos.outpoint, 1, 32) = $1
+`
+
+// The assets anchored in outputs of the given transaction: managed
+// UTXO outpoints are stored as txid || big-endian index, so a prefix
+// match on the txid finds every output of the transaction.
+func (q *Queries) AssetIDsByAnchorTxPrefix(ctx context.Context, txid []byte) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, AssetIDsByAnchorTxPrefix, txid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var asset_id int64
+		if err := rows.Scan(&asset_id); err != nil {
+			return nil, err
+		}
+		items = append(items, asset_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const AssetProofBlobByAssetID = `-- name: AssetProofBlobByAssetID :one
 SELECT proof_file
 FROM asset_proofs

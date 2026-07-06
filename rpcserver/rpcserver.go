@@ -12058,13 +12058,35 @@ func (r *RPCServer) RegisterTransfer(ctx context.Context,
 		return nil, fmt.Errorf("error importing proof: %w", err)
 	}
 
-	// In case this proof hasn't been buried sufficiently, let's also hand
-	// it to the re-org watcher.
-	err = r.cfg.ReOrgWatcher.MaybeWatch(
-		proofFile, r.cfg.ReOrgWatcher.DefaultUpdateCallback(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("error watching received proof: %w", err)
+	// In case this proof hasn't been buried sufficiently, register it
+	// with the re-org watcher: as a speculative anchoring when the
+	// anchoring watcher is available (and a trigger set is derivable
+	// from the file), falling back to the legacy proof watcher
+	// otherwise.
+	registered := false
+	if r.cfg.AnchoringWatcher != nil && r.cfg.AssetCustodian != nil {
+		err := r.cfg.AssetCustodian.RegisterReceiveAnchoring(
+			ctx, proofFile,
+		)
+		switch {
+		case err == nil:
+			registered = true
+
+		case errors.Is(err, tapcustody.ErrNoTriggers):
+
+		default:
+			return nil, fmt.Errorf("error registering receive "+
+				"anchoring: %w", err)
+		}
+	}
+	if !registered {
+		err = r.cfg.ReOrgWatcher.MaybeWatch(
+			proofFile, r.cfg.ReOrgWatcher.DefaultUpdateCallback(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error watching received "+
+				"proof: %w", err)
+		}
 	}
 
 	lastProof, err := proofFile.LastProof()

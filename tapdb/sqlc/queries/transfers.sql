@@ -368,3 +368,13 @@ SET anchor_utxo_id = @anchor_utxo_id,
     lock_time = @lock_time,
     relative_lock_time = @relative_lock_time
 WHERE asset_id = @asset_id;
+
+-- name: AssetIDsByAnchorTxPrefix :many
+-- The assets anchored in outputs of the given transaction: managed
+-- UTXO outpoints are stored as txid || big-endian index, so a prefix
+-- match on the txid finds every output of the transaction.
+SELECT assets.asset_id
+FROM assets
+JOIN managed_utxos utxos
+  ON assets.anchor_utxo_id = utxos.utxo_id
+WHERE substr(utxos.outpoint, 1, 32) = @txid;
