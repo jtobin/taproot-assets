@@ -30,6 +30,7 @@ type Querier interface {
 	// payload was produced for a batch that legitimately requested
 	// them.
 	BindMintingBatchWithTx(ctx context.Context, arg BindMintingBatchWithTxParams) (int64, error)
+	// A certified foreclosure is absorbing and never cleared.
 	ClearReorgDependencyForeclosure(ctx context.Context, arg ClearReorgDependencyForeclosureParams) error
 	ConfirmChainAnchorTx(ctx context.Context, arg ConfirmChainAnchorTxParams) error
 	ConfirmChainTx(ctx context.Context, arg ConfirmChainTxParams) error
@@ -313,6 +314,7 @@ type Querier interface {
 	UniverseRoots(ctx context.Context, arg UniverseRootsParams) ([]UniverseRootsRow, error)
 	UpdateBatchGenesisTx(ctx context.Context, arg UpdateBatchGenesisTxParams) error
 	UpdateMintingBatchState(ctx context.Context, arg UpdateMintingBatchStateParams) error
+	// Certification is sticky, as for candidate spends.
 	UpdateReorgDependencyForeclosure(ctx context.Context, arg UpdateReorgDependencyForeclosureParams) error
 	UpdateSupplyCommitTransitionCommitment(ctx context.Context, arg UpdateSupplyCommitTransitionCommitmentParams) error
 	UpdateSupplyCommitmentChainDetails(ctx context.Context, arg UpdateSupplyCommitmentChainDetailsParams) error
@@ -348,6 +350,8 @@ type Querier interface {
 	UpsertMintSupplyPreCommit(ctx context.Context, arg UpsertMintSupplyPreCommitParams) (int64, error)
 	UpsertMultiverseLeaf(ctx context.Context, arg UpsertMultiverseLeafParams) (int64, error)
 	UpsertMultiverseRoot(ctx context.Context, arg UpsertMultiverseRootParams) (int64, error)
+	// Certification is sticky: once set it survives every later update,
+	// since a certified act crossing is never retracted by re-orgs.
 	UpsertReorgCandidateSpend(ctx context.Context, arg UpsertReorgCandidateSpendParams) error
 	UpsertRfqPolicy(ctx context.Context, arg UpsertRfqPolicyParams) error
 	UpsertRootNode(ctx context.Context, arg UpsertRootNodeParams) error

@@ -919,6 +919,13 @@ CREATE TABLE reorg_candidate_spends (
     block_height INTEGER,
     tx_index INTEGER,
 
+    -- Set when the chain notifier certified this candidate reaching
+    -- the anchoring's threshold depth (a confirmation subscription
+    -- registered at that depth fired). Act-tier phase derivation
+    -- trusts only this certification, never depth arithmetic over a
+    -- possibly-torn view. Sticky: never cleared by later re-orgs.
+    act_certified BOOLEAN NOT NULL DEFAULT FALSE,
+
     -- The trigger outpoints this candidate spends, encoded as a
     -- concatenation of (txid || big-endian index) tuples.
     spent_outpoints BLOB NOT NULL
@@ -937,7 +944,12 @@ CREATE TABLE reorg_dependencies (
         CHECK(length(parent_witness_txid) = 32),
 
     foreclosing_evidence BLOB,
-    foreclosing_on_chain BOOLEAN NOT NULL DEFAULT FALSE
+    foreclosing_on_chain BOOLEAN NOT NULL DEFAULT FALSE,
+
+    -- Set when the notifier certified the foreclosing transaction
+    -- reaching the child's threshold depth; only a certified
+    -- foreclosure abandons the child.
+    foreclosing_act_certified BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE INDEX reorg_dependencies_parent_idx

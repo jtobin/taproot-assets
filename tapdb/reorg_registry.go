@@ -238,6 +238,36 @@ func (s *ReorgRegistryStore) LiveAnchorings(
 	return out, nil
 }
 
+// AllAnchorings returns every anchoring in the registry, live and
+// terminal, for the observability surface.
+func (s *ReorgRegistryStore) AllAnchorings(
+	ctx context.Context) ([]*tapreorg.Anchoring, error) {
+
+	var out []*tapreorg.Anchoring
+	dbErr := s.db.ExecTx(ctx, ReadTxOption(), func(q *sqlc.Queries) error {
+		rows, err := q.ListReorgAnchorings(ctx)
+		if err != nil {
+			return err
+		}
+
+		out = make([]*tapreorg.Anchoring, 0, len(rows))
+		for _, row := range rows {
+			anchoring, err := assembleAnchoring(ctx, q, row)
+			if err != nil {
+				return err
+			}
+			out = append(out, anchoring)
+		}
+
+		return nil
+	})
+	if dbErr != nil {
+		return nil, dbErr
+	}
+
+	return out, nil
+}
+
 // ChainView assembles the anchoring's chain view.
 func (s *ReorgRegistryStore) ChainView(ctx context.Context,
 	id tapreorg.AnchoringID) (tapreorg.ChainView, error) {
@@ -294,6 +324,7 @@ func (s *ReorgRegistryStore) UpsertCandidate(ctx context.Context,
 					Int32: int32(candidate.W.TxIndex()),
 					Valid: true,
 				},
+				ActCertified: candidate.ActCertified,
 				SpentOutpoints: orEmpty(
 					tapreorg.EncodeOutPoints(
 						candidate.SpentOutPoints,
@@ -613,6 +644,8 @@ func (s *ReorgRegistryStore) StageForeclosure(ctx context.Context,
 				ParentID:            int64(parent),
 				ForeclosingEvidence: evidence,
 				ForeclosingOnChain:  foreclosure.OnChain,
+				ForeclosingActCertified: foreclosure.
+					ActCertified,
 			},
 		)
 	})
@@ -839,9 +872,10 @@ func assembleChainView(ctx context.Context, q *sqlc.Queries,
 		}
 
 		event := tapreorg.ForeclosureEvent{
-			Parent:  tapreorg.AnchoringID(edge.ParentID),
-			W:       w,
-			OnChain: edge.ForeclosingOnChain,
+			Parent:       tapreorg.AnchoringID(edge.ParentID),
+			W:            w,
+			OnChain:      edge.ForeclosingOnChain,
+			ActCertified: edge.ForeclosingActCertified,
 		}
 
 		current := view.Foreclosure.UnwrapToPtr()
@@ -854,8 +888,12 @@ func assembleChainView(ctx context.Context, q *sqlc.Queries,
 }
 
 // foreclosureStronger reports whether a should replace b as the
-// view's staged foreclosure.
+// view's staged foreclosure: certified beats uncertified, then
+// on-chain beats off-chain, then deeper wins.
 func foreclosureStronger(a, b tapreorg.ForeclosureEvent) bool {
+	if a.ActCertified != b.ActCertified {
+		return a.ActCertified
+	}
 	if a.OnChain != b.OnChain {
 		return a.OnChain
 	}
@@ -908,6 +946,7 @@ func assembleCandidate(
 		Verdict:        verdict,
 		W:              w,
 		OnChain:        row.OnChain,
+		ActCertified:   row.ActCertified,
 		SpentOutPoints: spent,
 	}, nil
 }
@@ -931,9 +970,10 @@ func assembleEdge(row sqlc.ReorgDependency) (tapreorg.DependencyEdge, error) {
 			return tapreorg.DependencyEdge{}, err
 		}
 		edge.Foreclosure = fn.Some(tapreorg.ForeclosureEvent{
-			Parent:  tapreorg.AnchoringID(row.ParentID),
-			W:       w,
-			OnChain: row.ForeclosingOnChain,
+			Parent:       tapreorg.AnchoringID(row.ParentID),
+			W:            w,
+			OnChain:      row.ForeclosingOnChain,
+			ActCertified: row.ForeclosingActCertified,
 		})
 	}
 

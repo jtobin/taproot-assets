@@ -160,7 +160,7 @@ func TestReorgRegistryLifecycle(t *testing.T) {
 
 	view, err := store.ChainView(ctx, id)
 	require.NoError(t, err)
-	witnessed := tapreorg.DerivePhase(view, spec.Threshold, 600)
+	witnessed := tapreorg.DerivePhase(view)
 	require.IsType(t, tapreorg.Witnessed{}, witnessed)
 	require.NoError(t, store.SetPhase(ctx, id, witnessed))
 
@@ -245,9 +245,21 @@ func TestReorgRegistryLifecycle(t *testing.T) {
 	require.EqualValues(t, 1, effects[0].Attempts)
 	require.NoError(t, store.MarkEffectDispatched(ctx, effects[0].ID))
 
-	// Burial: terminal delivery drops the anchoring from the live
-	// set and stamps it terminal.
-	buried := tapreorg.DerivePhase(view, spec.Threshold, 700)
+	// Burial: the notifier certifies the candidate at threshold
+	// depth; the certified view derives Buried, whose terminal
+	// delivery drops the anchoring from the live set.
+	require.NoError(t, store.UpsertCandidate(
+		ctx, id, tapreorg.CandidateSpend{
+			Verdict:        tapreorg.VerdictSatisfies,
+			W:              w,
+			OnChain:        true,
+			ActCertified:   true,
+			SpentOutPoints: []wire.OutPoint{op},
+		},
+	))
+	view, err = store.ChainView(ctx, id)
+	require.NoError(t, err)
+	buried := tapreorg.DerivePhase(view)
 	require.IsType(t, tapreorg.Buried{}, buried)
 	require.NoError(t, store.SetPhase(ctx, id, buried))
 	require.NoError(t, store.Deliver(ctx, id, buried, nil))
@@ -377,24 +389,37 @@ func TestReorgRegistryDependencies(t *testing.T) {
 	require.True(t, fc.OnChain)
 	require.Equal(t, wF.TxHash(), fc.W.TxHash())
 
-	// The child's chain view carries the foreclosure, and at the
-	// child's threshold it derives Abandoned{Foreclosed}.
+	// The child's chain view carries the staged foreclosure, but
+	// while uncertified it carries no force: the child abandons
+	// only when the notifier certifies the foreclosing transaction
+	// at the child's own threshold.
 	view, err := store.ChainView(ctx, childID)
 	require.NoError(t, err)
 	require.True(t, view.Foreclosure.IsSome())
 
-	childPhase := tapreorg.DerivePhase(view, 6, 620)
+	shallow := tapreorg.DerivePhase(view)
+	require.True(t, tapreorg.PhaseEqual(tapreorg.Unwitnessed{}, shallow))
+
+	// Certification of the foreclosing transaction resolves the
+	// child, attributed to the parent.
+	require.NoError(t, store.StageForeclosure(
+		ctx, childID, parentID, tapreorg.ForeclosureEvent{
+			Parent:       parentID,
+			W:            wF,
+			OnChain:      true,
+			ActCertified: true,
+		},
+	))
+	view, err = store.ChainView(ctx, childID)
+	require.NoError(t, err)
+
+	childPhase := tapreorg.DerivePhase(view)
 	childAbandoned, ok := childPhase.(tapreorg.Abandoned)
 	require.True(t, ok)
 	cause, ok := childAbandoned.Cause.(tapreorg.Foreclosed)
 	require.True(t, ok)
 	require.Equal(t, parentID, cause.Parent)
 	require.Equal(t, wF.TxHash(), cause.W.TxHash())
-
-	// Below the child's threshold, the staged foreclosure carries
-	// no force yet.
-	shallow := tapreorg.DerivePhase(view, 6, 612)
-	require.True(t, tapreorg.PhaseEqual(tapreorg.Unwitnessed{}, shallow))
 
 	// Terminal anchorings cannot be withdrawn.
 	require.NoError(t, store.SetPhase(ctx, childID, childPhase))

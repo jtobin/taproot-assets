@@ -417,16 +417,18 @@ type ReorgCandidateSpend struct {
 	BlockHash      []byte
 	BlockHeight    sql.NullInt32
 	TxIndex        sql.NullInt32
+	ActCertified   bool
 	SpentOutpoints []byte
 }
 
 type ReorgDependency struct {
-	ID                  int64
-	ChildID             int64
-	ParentID            int64
-	ParentWitnessTxid   []byte
-	ForeclosingEvidence []byte
-	ForeclosingOnChain  bool
+	ID                      int64
+	ChildID                 int64
+	ParentID                int64
+	ParentWitnessTxid       []byte
+	ForeclosingEvidence     []byte
+	ForeclosingOnChain      bool
+	ForeclosingActCertified bool
 }
 
 type ReorgOutbox struct {
