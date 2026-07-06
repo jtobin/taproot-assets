@@ -203,7 +203,7 @@ type Config struct {
 
 	MboxServerConfig authmailbox.ServerConfig
 
-	ReOrgWatcher *tapreorg.Watcher
+	ReOrgWatcher *tapreorg.LegacyWatcher
 
 	AssetMinter *tapgarden.ChainPlanter
 

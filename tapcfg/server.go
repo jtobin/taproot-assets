@@ -403,7 +403,7 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 		}
 	}
 
-	reOrgWatcher := tapreorg.NewWatcher(&tapreorg.Config{
+	reOrgWatcher := tapreorg.NewLegacyWatcher(&tapreorg.LegacyConfig{
 		ChainBridge:   chainBridge,
 		GroupVerifier: groupVerifier,
 		ProofArchive:  proofArchive,
