@@ -195,7 +195,9 @@ func (h *harness) newWatcher() *tapreorg.Watcher {
 	})
 	require.NoError(h.t, w.RegisterSite(h.site))
 	require.NoError(h.t, w.RegisterEffectHandler(
-		"test", func(context.Context, tapreorg.VersionedBlob) error {
+		"test", func(context.Context, fn.Option[tapreorg.AnchoringID],
+			tapreorg.VersionedBlob) error {
+
 			h.effects.Add(1)
 			return nil
 		},

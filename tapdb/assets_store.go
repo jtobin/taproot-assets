@@ -214,6 +214,11 @@ type ActiveAssetsStore interface {
 	// transfer.
 	DeleteBurnsByTransferID(ctx context.Context, transferID int64) error
 
+	// AssetProofBlobByAssetID fetches a proof blob by the asset's
+	// primary key.
+	AssetProofBlobByAssetID(ctx context.Context,
+		assetID int64) ([]byte, error)
+
 	// QueryAssets fetches the set of fully confirmed assets.
 	QueryAssets(context.Context, QueryAssetFilters) ([]ConfirmedAsset,
 		error)

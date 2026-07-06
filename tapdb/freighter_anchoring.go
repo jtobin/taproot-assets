@@ -553,6 +553,15 @@ func (a *AssetStore) ApplyTransferAbandonment(ctx context.Context,
 			return fmt.Errorf("unable to un-spend asset: %w", err)
 		}
 
+		// Release the lease the pending write took on the input,
+		// so the coins are selectable again without waiting for
+		// expiry.
+		err = q.DeleteUTXOLease(ctx, inputs[idx].AnchorPoint)
+		if err != nil {
+			return fmt.Errorf("unable to release input "+
+				"lease: %w", err)
+		}
+
 		numRevived, err := q.UnsupersedeSafeTransfers(
 			ctx, sqlc.UnsupersedeSafeTransfersParams{
 				AbandonedTransferID: assetTransfer.ID,
@@ -767,6 +776,21 @@ func (a *AssetStore) restorePassiveAssets(ctx context.Context,
 // caller (the porter site carries it in its anchoring payload).
 func (a *AssetStore) RebuildAnchorConfirm(ctx context.Context,
 	q *sqlc.Queries, anchorTx *wire.MsgTx, blockHash chainhash.Hash,
+	blockHeight, txIndex uint32, header wire.BlockHeader,
+	merkle proof.TxMerkleProof,
+	burnNote string) (*tapfreighter.AssetConfirmEvent,
+	[]*tapfreighter.AssetBurn, error) {
+
+	return a.rebuildAnchorConfirm(
+		ctx, q, anchorTx, blockHash, blockHeight, txIndex, header,
+		merkle, burnNote,
+	)
+}
+
+// rebuildAnchorConfirm is the store-interface-typed body of
+// RebuildAnchorConfirm.
+func (a *AssetStore) rebuildAnchorConfirm(ctx context.Context,
+	q ActiveAssetsStore, anchorTx *wire.MsgTx, blockHash chainhash.Hash,
 	blockHeight, txIndex uint32, header wire.BlockHeader,
 	merkle proof.TxMerkleProof,
 	burnNote string) (*tapfreighter.AssetConfirmEvent,
@@ -1069,3 +1093,38 @@ func (a *AssetStore) RebuildAnchorConfirm(ctx context.Context,
 
 	return conf, burns, nil
 }
+
+// RebuildConfirmEvent is RebuildAnchorConfirm inside a read
+// transaction of its own, for callers outside the watcher's delivery
+// path (the porter's proof-file mirroring and burn-event dispatch).
+func (a *AssetStore) RebuildConfirmEvent(ctx context.Context,
+	anchorTx *wire.MsgTx, blockHash chainhash.Hash,
+	blockHeight, txIndex uint32, header wire.BlockHeader,
+	merkle proof.TxMerkleProof,
+	burnNote string) (*tapfreighter.AssetConfirmEvent,
+	[]*tapfreighter.AssetBurn, error) {
+
+	var (
+		conf  *tapfreighter.AssetConfirmEvent
+		burns []*tapfreighter.AssetBurn
+	)
+	readOpts := NewAssetStoreReadTx()
+	dbErr := a.db.ExecTx(ctx, &readOpts, func(q ActiveAssetsStore) error {
+		var err error
+		conf, burns, err = a.rebuildAnchorConfirm(
+			ctx, q, anchorTx, blockHash, blockHeight, txIndex,
+			header, merkle, burnNote,
+		)
+
+		return err
+	})
+	if dbErr != nil {
+		return nil, nil, dbErr
+	}
+
+	return conf, burns, nil
+}
+
+// A compile-time assertion that the asset store provides the porter
+// site's persistence surface.
+var _ tapfreighter.AnchoringLog = (*AssetStore)(nil)

@@ -715,6 +715,9 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 			Signer:                 virtualTxSigner,
 			TxValidator:            &tap.ValidatorV0{},
 			ExportLog:              assetStore,
+			AnchoringWatcher:       anchoringWatcher,
+			AnchoringLog:           assetStore,
+			AnchoringThreshold:     uint32(cfg.ReOrgSafeDepth),
 			ChainBridge:            chainBridge,
 			GroupVerifier:          groupVerifier,
 			Wallet:                 walletAnchor,
@@ -730,6 +733,26 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 			DelegationKeyChecker:   addrBook,
 		},
 	)
+
+	// The porter runs as a site on the anchoring watcher: its
+	// handlers, delivery nudges and act-gated burn dispatch are all
+	// registered before the watcher starts.
+	err = anchoringWatcher.RegisterSite(chainPorter.AnchoringSite())
+	if err != nil {
+		return nil, fmt.Errorf("unable to register porter site: %w",
+			err)
+	}
+	anchoringWatcher.RegisterDeliveryListener(
+		chainPorter.OnAnchoringDelivered,
+	)
+	err = anchoringWatcher.RegisterEffectHandler(
+		tapfreighter.BurnSupplyEventsEffectKind,
+		chainPorter.DispatchBurnSupplyEvents,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to register burn effect "+
+			"handler: %w", err)
+	}
 
 	auxFundingController := tapchannel.NewFundingController(
 		tapchannel.FundingControllerCfg{
