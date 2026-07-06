@@ -665,6 +665,8 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 	// manage the supply commitment state machines for each asset group.
 	supplyCommitManager := supplycommit.NewManager(
 		supplycommit.ManagerCfg{
+			AnchoringWatcher:   anchoringWatcher,
+			AnchoringThreshold: uint32(cfg.ReOrgSafeDepth),
 			TreeView:           supplyTreeStore,
 			Commitments:        supplyCommitStore,
 			Wallet:             walletAnchor,
@@ -826,6 +828,27 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to register mint publish "+
+			"handler: %w", err)
+	}
+	err = anchoringWatcher.RegisterSite(&supplycommit.SupplySite{})
+	if err != nil {
+		return nil, fmt.Errorf("unable to register supply site: %w",
+			err)
+	}
+	err = anchoringWatcher.RegisterEffectHandler(
+		supplycommit.CommitFinalizeEffectKind,
+		func(ctx context.Context,
+			id fn.Option[tapreorg.AnchoringID],
+			payload tapreorg.VersionedBlob) error {
+
+			return supplycommit.DispatchCommitFinalize(
+				ctx, anchoringWatcher, chainBridge,
+				supplyCommitManager, id, payload,
+			)
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to register commit finalize "+
 			"handler: %w", err)
 	}
 

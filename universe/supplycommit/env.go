@@ -20,6 +20,7 @@ import (
 	"github.com/lightninglabs/taproot-assets/mssmt"
 	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightninglabs/taproot-assets/tapnode"
+	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightninglabs/taproot-assets/tapsend"
 	"github.com/lightninglabs/taproot-assets/universe"
 	lfn "github.com/lightningnetwork/lnd/fn/v2"
@@ -912,6 +913,17 @@ type Environment struct {
 
 	// KeyRing is the main key ring interface used to manage keys.
 	KeyRing KeyRing
+
+	// AnchoringWatcher is the re-org watcher a broadcast commitment
+	// registers with as a speculative anchoring. When set, the
+	// machine defers finalization until the watcher reports the
+	// commit transaction buried, instead of finalizing at a single
+	// confirmation.
+	AnchoringWatcher *tapreorg.Watcher
+
+	// AnchoringThreshold is the depth at which the commitment is
+	// act-confirmed (buried).
+	AnchoringThreshold uint32
 
 	// Chain is our access to the current main chain.
 	//

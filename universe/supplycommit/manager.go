@@ -15,6 +15,7 @@ import (
 	"github.com/lightninglabs/taproot-assets/fn"
 	"github.com/lightninglabs/taproot-assets/mssmt"
 	"github.com/lightninglabs/taproot-assets/tapnode"
+	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightninglabs/taproot-assets/universe"
 	"github.com/lightningnetwork/lnd/msgmux"
 	"github.com/lightningnetwork/lnd/protofsm"
@@ -41,6 +42,15 @@ type DaemonAdapters interface {
 // Manager. It contains all the dependencies needed to
 // manage multiple supply commitment state machines, one for each asset group.
 type ManagerCfg struct {
+	// AnchoringWatcher is the re-org watcher broadcast commitments
+	// register with as speculative anchorings; finalization is then
+	// act-gated on burial.
+	AnchoringWatcher *tapreorg.Watcher
+
+	// AnchoringThreshold is the depth at which a commitment is
+	// act-confirmed (buried).
+	AnchoringThreshold uint32
+
 	// TreeView is the interface that allows the state machine to obtain an
 	// up-to-date snapshot of the root supply tree, and the relevant set of
 	// subtrees.
@@ -164,6 +174,8 @@ func (m *Manager) startAssetSM(ctx context.Context,
 		CommitConfTarget:   DefaultCommitConfTarget,
 		ChainParams:        m.cfg.ChainParams,
 		IgnoreCheckerCache: m.cfg.IgnoreCheckerCache,
+		AnchoringWatcher:   m.cfg.AnchoringWatcher,
+		AnchoringThreshold: m.cfg.AnchoringThreshold,
 	}
 
 	// Before we start the state machine, we'll need to fetch the current

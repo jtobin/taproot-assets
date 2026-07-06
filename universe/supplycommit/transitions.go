@@ -967,6 +967,34 @@ func (c *CommitBroadcastState) ProcessEvent(event Event,
 		}
 
 		ctx := context.Background()
+
+		// On the anchoring path the re-org watcher is the sole
+		// sensor: the commitment registers as a speculative
+		// anchoring, and the confirmation event arrives through the
+		// watcher's outbox once the transaction is *buried* — the
+		// machine's finalization publishes irrevocably to remote
+		// universes, so it is act-gated rather than firing at a
+		// single confirmation.
+		if env.AnchoringWatcher != nil {
+			err := registerCommitAnchoring(
+				ctx, env, &c.SupplyTransition,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("unable to register "+
+					"commit anchoring: %w", err)
+			}
+
+			return &StateTransition{
+				NextState: &CommitBroadcastState{
+					SupplyTransition: c.SupplyTransition,
+				},
+				NewEvents: lfn.Some(FsmEvent{
+					ExternalEvents: protofsm.DaemonEventSet{
+						&broadcastReq,
+					}}),
+			}, nil
+		}
+
 		currentHeight, err := env.Chain.CurrentHeight(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("unable to get current "+
