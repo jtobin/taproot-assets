@@ -165,7 +165,7 @@ func TestReorgRegistryLifecycle(t *testing.T) {
 
 	view, err := store.ChainView(ctx, id)
 	require.NoError(t, err)
-	witnessed := tapreorg.DerivePhase(view, spec.Threshold, 600)
+	witnessed := tapreorg.DerivePhase(view)
 	require.IsType(t, tapreorg.Witnessed{}, witnessed)
 	require.NoError(t, store.SetPhase(ctx, id, witnessed))
 
@@ -254,9 +254,21 @@ func TestReorgRegistryLifecycle(t *testing.T) {
 	require.EqualValues(t, 1, effects[0].Attempts)
 	require.NoError(t, store.MarkEffectDispatched(ctx, effects[0].ID))
 
-	// Burial: terminal delivery drops the anchoring from the live
-	// set and stamps it terminal.
-	buried := tapreorg.DerivePhase(view, spec.Threshold, 700)
+	// Burial: the notifier certifies the candidate at threshold
+	// depth; the certified view derives Buried, whose terminal
+	// delivery drops the anchoring from the live set.
+	require.NoError(t, store.UpsertCandidate(
+		ctx, id, tapreorg.CandidateSpend{
+			Verdict:        tapreorg.VerdictSatisfies,
+			W:              w,
+			OnChain:        true,
+			ActCertified:   true,
+			SpentOutPoints: []wire.OutPoint{op},
+		},
+	))
+	view, err = store.ChainView(ctx, id)
+	require.NoError(t, err)
+	buried := tapreorg.DerivePhase(view)
 	require.IsType(t, tapreorg.Buried{}, buried)
 	require.NoError(t, store.SetPhase(ctx, id, buried))
 	require.NoError(t, store.Deliver(ctx, id, buried, nil))
@@ -388,24 +400,37 @@ func TestReorgRegistryDependencies(t *testing.T) {
 	require.True(t, fc.OnChain)
 	require.Equal(t, wF.TxHash(), fc.W.TxHash())
 
-	// The child's chain view carries the foreclosure, and at the
-	// child's threshold it derives Abandoned{Foreclosed}.
+	// The child's chain view carries the staged foreclosure, but
+	// while uncertified it carries no force: the child abandons
+	// only when the notifier certifies the foreclosing transaction
+	// at the child's own threshold.
 	view, err := store.ChainView(ctx, childID)
 	require.NoError(t, err)
 	require.True(t, view.Foreclosure.IsSome())
 
-	childPhase := tapreorg.DerivePhase(view, 6, 620)
+	shallow := tapreorg.DerivePhase(view)
+	require.True(t, tapreorg.PhaseEqual(tapreorg.Unwitnessed{}, shallow))
+
+	// Certification of the foreclosing transaction resolves the
+	// child, attributed to the parent.
+	require.NoError(t, store.StageForeclosure(
+		ctx, childID, parentID, tapreorg.ForeclosureEvent{
+			Parent:       parentID,
+			W:            wF,
+			OnChain:      true,
+			ActCertified: true,
+		},
+	))
+	view, err = store.ChainView(ctx, childID)
+	require.NoError(t, err)
+
+	childPhase := tapreorg.DerivePhase(view)
 	childAbandoned, ok := childPhase.(tapreorg.Abandoned)
 	require.True(t, ok)
 	cause, ok := childAbandoned.Cause.(tapreorg.Foreclosed)
 	require.True(t, ok)
 	require.Equal(t, parentID, cause.Parent)
 	require.Equal(t, wF.TxHash(), cause.W.TxHash())
-
-	// Below the child's threshold, the staged foreclosure carries
-	// no force yet.
-	shallow := tapreorg.DerivePhase(view, 6, 612)
-	require.True(t, tapreorg.PhaseEqual(tapreorg.Unwitnessed{}, shallow))
 
 	// Terminal anchorings cannot be withdrawn.
 	require.NoError(t, store.SetPhase(ctx, childID, childPhase))
@@ -539,6 +564,93 @@ func TestReorgRegistryEdgesBeforeParentObserved(t *testing.T) {
 	require.Len(t, edges, 2)
 }
 
+// TestReorgRegistryBurialSettlesEdges pins the terminal edge
+// settlement: delivering Buried clears the edges pinned to the buried
+// form and forecloses every other edge, inside the delivery
+// transaction — so a burial's effect on its dependents can never be
+// lost between the delivery and a later restage.
+func TestReorgRegistryBurialSettlesEdges(t *testing.T) {
+	t.Parallel()
+
+	store, _ := newReorgStore(t)
+	ctx := context.Background()
+
+	parentOp := testOutPoint(50, 0)
+	parentID, err := store.Register(
+		ctx, testSpec(t, "minter", parentOp), 500, nil,
+	)
+	require.NoError(t, err)
+
+	// Two observed satisfying forms: wP (on chain, about to bury)
+	// and wQ (reorged out). One child depends on each.
+	wP := testWitness(t, 51, 600, parentOp)
+	wQ := testWitness(t, 52, 601, parentOp)
+	require.NoError(t, store.UpsertCandidate(
+		ctx, parentID, tapreorg.CandidateSpend{
+			Verdict:        tapreorg.VerdictSatisfies,
+			W:              wP,
+			OnChain:        true,
+			ActCertified:   true,
+			SpentOutPoints: []wire.OutPoint{parentOp},
+		},
+	))
+	require.NoError(t, store.UpsertCandidate(
+		ctx, parentID, tapreorg.CandidateSpend{
+			Verdict:        tapreorg.VerdictSatisfies,
+			W:              wQ,
+			OnChain:        false,
+			SpentOutPoints: []wire.OutPoint{parentOp},
+		},
+	))
+
+	childAID, err := store.Register(
+		ctx, testSpec(
+			t, "porter",
+			wire.OutPoint{Hash: wP.TxHash(), Index: 0},
+		), 601, nil,
+	)
+	require.NoError(t, err)
+	childBID, err := store.Register(
+		ctx, testSpec(
+			t, "porter",
+			wire.OutPoint{Hash: wQ.TxHash(), Index: 0},
+		), 602, nil,
+	)
+	require.NoError(t, err)
+
+	// Stale uncertified staging on child A's edge, to prove the
+	// burial clears the depended-upon form's edge.
+	require.NoError(t, store.StageForeclosure(
+		ctx, childAID, parentID, tapreorg.ForeclosureEvent{
+			Parent: parentID, W: wQ, OnChain: true,
+		},
+	))
+
+	buried := tapreorg.Buried{W: wP}
+	require.NoError(t, store.SetPhase(ctx, parentID, buried))
+	require.NoError(t, store.Deliver(ctx, parentID, buried, nil))
+
+	edges, err := store.DependencyEdges(ctx, parentID)
+	require.NoError(t, err)
+	require.Len(t, edges, 2)
+	for _, edge := range edges {
+		switch edge.Child {
+		case childAID:
+			require.True(t, edge.Foreclosure.IsNone())
+
+		case childBID:
+			fc := edge.Foreclosure.UnwrapToPtr()
+			require.NotNil(t, fc)
+			require.True(t, fc.OnChain)
+			require.False(t, fc.ActCertified)
+			require.Equal(t, wP.TxHash(), fc.W.TxHash())
+
+		default:
+			t.Fatalf("unexpected edge child %d", edge.Child)
+		}
+	}
+}
+
 // TestReorgRegistryTerminalAbsorbing pins the row-level absorbing
 // invariant: once an anchoring's sensed phase is terminal, SetPhase
 // refuses to move it, whatever the caller derived. The sensing loop's
@@ -586,6 +698,106 @@ func TestReorgRegistryTerminalAbsorbing(t *testing.T) {
 	require.True(t, tapreorg.PhaseEqual(
 		tapreorg.Withdrawn{}, a2.DeliveredPhase,
 	))
+}
+
+// TestReorgRegistryCertifiedForeclosureFrozen pins the edge-level
+// absorbing invariant: the first certified foreclosure freezes the
+// edge's evidence entirely. While uncertified, staged evidence tracks
+// the parent's current form freely; after certification, restaging —
+// fresher forms, off-chain flips, clears — no longer counts, since
+// the child would otherwise absorb an abandonment on a transaction
+// the notifier never certified.
+func TestReorgRegistryCertifiedForeclosureFrozen(t *testing.T) {
+	t.Parallel()
+
+	store, _ := newReorgStore(t)
+	ctx := context.Background()
+
+	parentOp := testOutPoint(40, 0)
+	parentID, err := store.Register(
+		ctx, testSpec(t, "minter", parentOp), 500, nil,
+	)
+	require.NoError(t, err)
+
+	wP := testWitness(t, 41, 600, parentOp)
+	require.NoError(t, store.UpsertCandidate(
+		ctx, parentID, tapreorg.CandidateSpend{
+			Verdict:        tapreorg.VerdictSatisfies,
+			W:              wP,
+			OnChain:        true,
+			SpentOutPoints: []wire.OutPoint{parentOp},
+		},
+	))
+	require.NoError(t, store.SetPhase(
+		ctx, parentID, tapreorg.Witnessed{W: wP},
+	))
+
+	childOp := wire.OutPoint{Hash: wP.TxHash(), Index: 0}
+	childID, err := store.Register(
+		ctx, testSpec(t, "porter", childOp), 601, nil,
+	)
+	require.NoError(t, err)
+
+	staged := func() tapreorg.ForeclosureEvent {
+		edges, err := store.DependencyEdges(ctx, parentID)
+		require.NoError(t, err)
+		require.Len(t, edges, 1)
+		fc := edges[0].Foreclosure.UnwrapToPtr()
+		require.NotNil(t, fc)
+
+		return *fc
+	}
+
+	// Uncertified evidence tracks the parent's current form freely.
+	wA := testWitness(t, 42, 610, parentOp)
+	require.NoError(t, store.StageForeclosure(
+		ctx, childID, parentID, tapreorg.ForeclosureEvent{
+			Parent: parentID, W: wA, OnChain: true,
+		},
+	))
+	wB := testWitness(t, 43, 611, parentOp)
+	require.NoError(t, store.StageForeclosure(
+		ctx, childID, parentID, tapreorg.ForeclosureEvent{
+			Parent: parentID, W: wB, OnChain: true,
+		},
+	))
+	require.Equal(t, wB.TxHash(), staged().W.TxHash())
+
+	// The notifier certifies wB at the child's threshold.
+	require.NoError(t, store.StageForeclosure(
+		ctx, childID, parentID, tapreorg.ForeclosureEvent{
+			Parent: parentID, W: wB, OnChain: true,
+			ActCertified: true,
+		},
+	))
+	require.True(t, staged().ActCertified)
+
+	// A later uncertified form must not displace certified
+	// evidence.
+	wC := testWitness(t, 44, 612, parentOp)
+	require.NoError(t, store.StageForeclosure(
+		ctx, childID, parentID, tapreorg.ForeclosureEvent{
+			Parent: parentID, W: wC, OnChain: true,
+		},
+	))
+	fc := staged()
+	require.Equal(t, wB.TxHash(), fc.W.TxHash())
+	require.True(t, fc.ActCertified)
+	require.True(t, fc.OnChain)
+
+	// Nor can a reorg talk certified evidence off-chain: act-level
+	// finality is exactly the point past which the chain's later
+	// opinion no longer counts.
+	offChain := fc
+	offChain.OnChain = false
+	require.NoError(t, store.StageForeclosure(
+		ctx, childID, parentID, offChain,
+	))
+	require.True(t, staged().OnChain)
+
+	// And a certified foreclosure is never cleared.
+	require.NoError(t, store.ClearForeclosure(ctx, childID, parentID))
+	require.True(t, staged().ActCertified)
 }
 
 // TestReorgRegistryRapid is a model-based test of the pending-
