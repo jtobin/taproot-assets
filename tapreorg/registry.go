@@ -70,14 +70,17 @@ type StoredEffect struct {
 // registry advances and site handlers possible.
 type Registry interface {
 	// Register inserts the anchoring (phase Unwitnessed, delivered
-	// Unwitnessed), derives its dependency edges from live
-	// anchorings whose current witness created its trigger
-	// outpoints, and runs the site's phase-1 speculative write —
-	// all in one transaction. There is no instant at which the
-	// stake exists without its registration.
+	// Unwitnessed) at the given best height, derives its
+	// dependency edges from live anchorings whose current witness
+	// created its trigger outpoints, and runs the site's phase-1
+	// speculative write — all in one transaction. There is no
+	// instant at which the stake exists without its registration.
+	// The phase-1 write receives the new anchoring's ID so the
+	// site can key its own rows (and effects) to it.
 	Register(ctx context.Context, spec RegistrationSpec,
-		phase1 func(context.Context, RegistryTx) error) (AnchoringID,
-		error)
+		createdHeight uint32,
+		phase1 func(context.Context, RegistryTx,
+			AnchoringID) error) (AnchoringID, error)
 
 	// GetAnchoring fetches an anchoring with its chain view.
 	GetAnchoring(ctx context.Context,
