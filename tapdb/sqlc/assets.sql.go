@@ -2889,6 +2889,43 @@ func (q *Queries) SetAssetSpent(ctx context.Context, arg SetAssetSpentParams) (i
 	return asset_id, err
 }
 
+const SetAssetUnspent = `-- name: SetAssetUnspent :one
+WITH target_asset(asset_id) AS (
+    SELECT assets.asset_id
+    FROM assets
+    JOIN script_keys
+      ON assets.script_key_id = script_keys.script_key_id
+    JOIN genesis_assets
+      ON assets.genesis_id = genesis_assets.gen_asset_id
+    JOIN managed_utxos utxos
+         ON assets.anchor_utxo_id = utxos.utxo_id AND
+            (utxos.outpoint = $1 OR
+             $1 IS NULL)
+    WHERE script_keys.tweaked_script_key = $2
+     AND genesis_assets.asset_id = $3
+)
+UPDATE assets
+SET spent = FALSE
+WHERE asset_id = (SELECT asset_id FROM target_asset)
+RETURNING assets.asset_id
+`
+
+type SetAssetUnspentParams struct {
+	AnchorPoint []byte
+	ScriptKey   []byte
+	GenAssetID  []byte
+}
+
+// The inverse of SetAssetSpent, applied when the transfer that spent
+// the asset is abandoned: the asset's anchor input was never
+// consumed on the surviving chain.
+func (q *Queries) SetAssetUnspent(ctx context.Context, arg SetAssetUnspentParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, SetAssetUnspent, arg.AnchorPoint, arg.ScriptKey, arg.GenAssetID)
+	var asset_id int64
+	err := row.Scan(&asset_id)
+	return asset_id, err
+}
+
 const UpdateBatchGenesisTx = `-- name: UpdateBatchGenesisTx :exec
 WITH target_batch AS (
     SELECT batch_id

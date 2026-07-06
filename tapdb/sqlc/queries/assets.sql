@@ -1194,3 +1194,26 @@ WHERE (
     (taproot_internal_keys.raw_key = sqlc.narg('taproot_internal_key_raw') OR sqlc.narg('taproot_internal_key_raw') IS NULL)
 )
 ORDER BY precommits.id ASC;
+
+-- name: SetAssetUnspent :one
+-- The inverse of SetAssetSpent, applied when the transfer that spent
+-- the asset is abandoned: the asset's anchor input was never
+-- consumed on the surviving chain.
+WITH target_asset(asset_id) AS (
+    SELECT assets.asset_id
+    FROM assets
+    JOIN script_keys
+      ON assets.script_key_id = script_keys.script_key_id
+    JOIN genesis_assets
+      ON assets.genesis_id = genesis_assets.gen_asset_id
+    JOIN managed_utxos utxos
+         ON assets.anchor_utxo_id = utxos.utxo_id AND
+            (utxos.outpoint = sqlc.narg('anchor_point') OR
+             sqlc.narg('anchor_point') IS NULL)
+    WHERE script_keys.tweaked_script_key = @script_key
+     AND genesis_assets.asset_id = @gen_asset_id
+)
+UPDATE assets
+SET spent = FALSE
+WHERE asset_id = (SELECT asset_id FROM target_asset)
+RETURNING assets.asset_id;
