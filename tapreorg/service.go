@@ -294,6 +294,30 @@ func (w *Watcher) Anchorings(ctx context.Context,
 	return out, nil
 }
 
+// AllAnchorings reads one site's anchorings across every phase,
+// settled ones included. Identity lookups — a resumed subsystem
+// re-finding its stake, a registration deduplicating by payload —
+// must span the full history: an anchoring leaves the live set the
+// moment it is buried, which is precisely when a restarted consumer
+// comes looking for it.
+func (w *Watcher) AllAnchorings(ctx context.Context,
+	site SiteID) ([]*Anchoring, error) {
+
+	all, err := w.cfg.Registry.AllAnchorings(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]*Anchoring, 0, len(all))
+	for _, anchoring := range all {
+		if anchoring.Site == site {
+			out = append(out, anchoring)
+		}
+	}
+
+	return out, nil
+}
+
 // sendEvent delivers an event to the sensing loop, respecting
 // shutdown and the caller's context.
 func (w *Watcher) sendEvent(ctx context.Context, event any) error {

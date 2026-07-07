@@ -82,8 +82,9 @@ type AnchoringRegistrar interface {
 			tapreorg.AnchoringID) error) (tapreorg.AnchoringID,
 		error)
 
-	// Anchorings lists the site's live anchorings.
-	Anchorings(ctx context.Context,
+	// AllAnchorings lists the site's anchorings across every phase,
+	// settled ones included.
+	AllAnchorings(ctx context.Context,
 		site tapreorg.SiteID) ([]*tapreorg.Anchoring, error)
 }
 
@@ -321,7 +322,7 @@ func registerCommitAnchoring(ctx context.Context, env *Environment,
 	var rawGroupKey [33]byte
 	copy(rawGroupKey[:], groupKey.SerializeCompressed())
 
-	existing, err := env.AnchoringWatcher.Anchorings(ctx, SupplySiteID)
+	existing, err := env.AnchoringWatcher.AllAnchorings(ctx, SupplySiteID)
 	if err != nil {
 		return fmt.Errorf("unable to list anchorings: %w", err)
 	}

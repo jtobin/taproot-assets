@@ -265,7 +265,7 @@ func (c *Custodian) RegisterReceiveAnchoring(ctx context.Context,
 	// One anchoring per anchor transaction: if a previous receive
 	// (or another output of the same send) already registered it,
 	// nothing to do.
-	existing, err := c.cfg.AnchoringWatcher.Anchorings(
+	existing, err := c.cfg.AnchoringWatcher.AllAnchorings(
 		ctx, ReceiveSiteID,
 	)
 	if err != nil {

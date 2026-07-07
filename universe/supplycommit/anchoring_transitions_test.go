@@ -31,7 +31,7 @@ func (m *mockAnchoringRegistrar) Register(ctx context.Context,
 	return args.Get(0).(tapreorg.AnchoringID), args.Error(1)
 }
 
-func (m *mockAnchoringRegistrar) Anchorings(ctx context.Context,
+func (m *mockAnchoringRegistrar) AllAnchorings(ctx context.Context,
 	site tapreorg.SiteID) ([]*tapreorg.Anchoring, error) {
 
 	args := m.Called(ctx, site)
@@ -216,7 +216,7 @@ func TestSupplyCommitBroadcastRestingTick(t *testing.T) {
 			"BroadcastTransaction", mock.Anything, mock.Anything,
 		).Return(nil).Once()
 
-		registrar.On("Anchorings", mock.Anything, SupplySiteID).
+		registrar.On("AllAnchorings", mock.Anything, SupplySiteID).
 			Return([]*tapreorg.Anchoring{}, nil).Once()
 		registrar.On(
 			"Register", mock.Anything,

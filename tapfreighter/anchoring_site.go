@@ -437,7 +437,7 @@ func (p *ChainPorter) DispatchBurnSupplyEvents(ctx context.Context,
 func (p *ChainPorter) findAnchoring(ctx context.Context,
 	anchorTxid chainhash.Hash) (*tapreorg.Anchoring, error) {
 
-	anchorings, err := p.cfg.AnchoringWatcher.Anchorings(ctx, PorterSiteID)
+	anchorings, err := p.cfg.AnchoringWatcher.AllAnchorings(ctx, PorterSiteID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to list anchorings: %w", err)
 	}

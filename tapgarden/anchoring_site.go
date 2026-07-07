@@ -433,7 +433,7 @@ func (b *Cultivator) registerMintAnchoring(ctx context.Context,
 
 	genesisTxid := signedTx.TxHash()
 
-	existing, err := b.cfg.AnchoringWatcher.Anchorings(ctx, MintSiteID)
+	existing, err := b.cfg.AnchoringWatcher.AllAnchorings(ctx, MintSiteID)
 	if err != nil {
 		return fmt.Errorf("unable to list anchorings: %w", err)
 	}
@@ -517,7 +517,7 @@ func (b *Cultivator) waitForMintAnchoring(ctx context.Context,
 
 	for {
 		if anchoringID == 0 {
-			anchorings, err := b.cfg.AnchoringWatcher.Anchorings(
+			anchorings, err := b.cfg.AnchoringWatcher.AllAnchorings(
 				ctx, MintSiteID,
 			)
 			if err != nil {

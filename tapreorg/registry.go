@@ -90,6 +90,9 @@ type Registry interface {
 	// phase, with their chain views.
 	LiveAnchorings(ctx context.Context) ([]*Anchoring, error)
 
+	// AllAnchorings returns every anchoring, live and settled.
+	AllAnchorings(ctx context.Context) ([]*Anchoring, error)
+
 	// ChainView assembles the anchoring's chain view: its
 	// candidate spends plus its strongest staged foreclosure.
 	ChainView(ctx context.Context, id AnchoringID) (ChainView, error)
