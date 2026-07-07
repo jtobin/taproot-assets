@@ -180,3 +180,59 @@ func TestGenesisSeedCandidateFromFile(t *testing.T) {
 	require.NoError(t, anchorTx.Serialize(&original))
 	require.Equal(t, original.Bytes(), recovered.Bytes())
 }
+
+// TestRegisterReceiveAnchoringUnwatchable asserts that a genesis-shape
+// file with no block context returns ErrUnwatchable: callers see the
+// outcome legibly rather than mistaking a warning-log-and-nil for
+// successful registration.
+func TestRegisterReceiveAnchoringUnwatchable(t *testing.T) {
+	t.Parallel()
+
+	registrar := tapreorg.NewMockRegistrar()
+	c := &Custodian{
+		cfg: &Config{
+			AnchoringWatcher:   registrar,
+			AnchoringThreshold: 6,
+		},
+	}
+
+	fundingOp := wire.OutPoint{Hash: chainhash.Hash{0x33}, Index: 0}
+	anchorTx := wire.NewMsgTx(2)
+	anchorTx.AddTxIn(wire.NewTxIn(&fundingOp, nil, nil))
+	anchorTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xee}))
+
+	// singleProofGenesisFile sets BlockHeight to 700; force the stub
+	// case by rebuilding a proof file with height 0.
+	scriptKey := asset.NewScriptKey(test.RandPubKey(t))
+	p := proof.Proof{
+		PrevOut:       wire.OutPoint{},
+		BlockHeader:   wire.BlockHeader{Version: 1},
+		BlockHeight:   0,
+		AnchorTx:      *anchorTx,
+		TxMerkleProof: proof.TxMerkleProof{},
+		Asset: asset.Asset{
+			Version:   asset.V0,
+			Amount:    1_000,
+			ScriptKey: scriptKey,
+			PrevWitnesses: []asset.Witness{
+				{PrevID: &asset.PrevID{}},
+			},
+		},
+		InclusionProof: proof.TaprootProof{
+			InternalKey: test.RandPubKey(t),
+			OutputIndex: 0,
+		},
+	}
+	file, err := proof.NewFile(proof.V0, p)
+	require.NoError(t, err)
+
+	err = c.RegisterReceiveAnchoring(context.Background(), file)
+	require.ErrorIs(t, err, ErrUnwatchable)
+
+	// Nothing was registered.
+	anchorings, err := registrar.AllAnchorings(
+		context.Background(), ReceiveSiteID,
+	)
+	require.NoError(t, err)
+	require.Empty(t, anchorings)
+}

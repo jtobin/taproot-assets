@@ -3,6 +3,7 @@ package tapchannel
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -21,6 +22,7 @@ import (
 	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightninglabs/taproot-assets/tapchannelmsg"
 	cmsg "github.com/lightninglabs/taproot-assets/tapchannelmsg"
+	"github.com/lightninglabs/taproot-assets/tapcustody"
 	"github.com/lightninglabs/taproot-assets/tapfreighter"
 	"github.com/lightninglabs/taproot-assets/tapnode"
 	"github.com/lightninglabs/taproot-assets/tappsbt"
@@ -1693,11 +1695,19 @@ func (a *AuxSweeper) materializeAssetOutputs(ctx context.Context,
 		// speculative anchoring. Files with derivable asset-
 		// bearing triggers register the ordinary way; single-proof
 		// genesis-shaped files (rare for sweep imports) seed the
-		// anchor tx directly inside the receive site.
+		// anchor tx directly inside the receive site. An
+		// ErrUnwatchable proof (a stub with no block context) is
+		// non-fatal — the sweep import proceeds without a re-org
+		// watcher on that file.
 		err = a.cfg.AnchoringRegistrar.RegisterReceiveAnchoring(
 			ctx, &proofFile,
 		)
-		if err != nil {
+		switch {
+		case errors.Is(err, tapcustody.ErrUnwatchable):
+			log.Warnf("Swept proof file is not watchable, not "+
+				"registered: %v", err)
+
+		case err != nil:
 			return fmt.Errorf("unable to register sweep "+
 				"anchoring: %w", err)
 		}

@@ -305,12 +305,13 @@ func (c *Custodian) RegisterReceiveAnchoring(ctx context.Context,
 		// context is what the watcher's conf subscription
 		// certifies against. A tip without block context
 		// (a stub, or a proof imported before confirmation) is
-		// not stakeable here; surface the condition.
+		// not stakeable here; return ErrUnwatchable so callers
+		// see the outcome legibly rather than mistaking it for
+		// successful registration.
 		if tip.BlockHeight == 0 {
-			log.Warnf("Received genesis-shape proof file has "+
-				"no block context yet, not watching it for "+
-				"re-orgs (anchor_txid=%v)", anchorTxid)
-			return nil
+			return fmt.Errorf("%w: genesis-shape file with no "+
+				"block context (anchor_txid=%v)",
+				ErrUnwatchable, anchorTxid)
 		}
 
 		seed, seedErr := genesisSeedCandidate(tip)
@@ -390,6 +391,15 @@ func genesisSeedCandidate(
 // by seeding the anchor tx as the anchoring's candidate spend rather
 // than watching for a witnessing spender.
 var ErrNoTriggers = fmt.Errorf("no derivable trigger outpoints")
+
+// ErrUnwatchable is returned by RegisterReceiveAnchoring when the
+// proof file's tip carries no chain context we can stake on — the
+// canonical case is a single-proof genesis file imported before its
+// anchor transaction confirmed. The registration is a non-event, not
+// a failure: callers typically log and continue, but the typed
+// signal lets them distinguish "watched" from "un-watched" outcomes
+// without conflating both with a nil return.
+var ErrUnwatchable = fmt.Errorf("proof file is not watchable")
 
 // receiveTriggerPoints derives the anchoring's trigger set from a
 // proof file: the tip transition's previous asset outpoint (script

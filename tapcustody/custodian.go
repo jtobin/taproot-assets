@@ -1748,10 +1748,9 @@ func (c *Custodian) setReceiveCompleted(event *address.Event,
 	// staked; the condition is surfaced rather than silently dropped.
 	err := c.RegisterReceiveAnchoring(ctxt, proofFile)
 	switch {
-	case errors.Is(err, ErrNoTriggers):
-		log.Warnf("Received proof file has no derivable trigger "+
-			"outpoints, not watching it for re-orgs "+
-			"(event=%v)", event.Outpoint)
+	case errors.Is(err, ErrUnwatchable):
+		log.Warnf("Received proof file is not watchable, not "+
+			"registered (event=%v): %v", event.Outpoint, err)
 
 	case err != nil:
 		return fmt.Errorf("error registering receive "+

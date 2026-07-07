@@ -12068,9 +12068,16 @@ func (r *RPCServer) RegisterTransfer(ctx context.Context,
 	// it with the re-org watcher as a speculative anchoring. Files
 	// with derivable asset-bearing triggers register the ordinary
 	// way; single-proof genesis-shaped files seed the anchor tx
-	// directly inside the receive site.
+	// directly inside the receive site. An ErrUnwatchable proof
+	// (a stub with no block context) is non-fatal — the transfer
+	// registration proceeds without a re-org watcher on that file.
 	err = r.cfg.AssetCustodian.RegisterReceiveAnchoring(ctx, proofFile)
-	if err != nil {
+	switch {
+	case errors.Is(err, tapcustody.ErrUnwatchable):
+		rpcsLog.Warnf("Registered proof file is not watchable, not "+
+			"registered: %v", err)
+
+	case err != nil:
 		return nil, fmt.Errorf("error registering receive "+
 			"anchoring: %w", err)
 	}
