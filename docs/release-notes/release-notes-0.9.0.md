@@ -330,6 +330,12 @@
   re-derives what it needs from the durable record, so no migration is
   required.
 
+* The legacy proof watcher is deleted from the exported Go API:
+  `proof.Watcher` and `proof.UpdateCallback`, `tapreorg.LegacyWatcher`
+  with `LegacyConfig` and `NewLegacyWatcher`, the
+  `tapconfig.Config.ReOrgWatcher` field, and `tapgarden.MockProofWatcher`
+  are gone.
+
 ## Performance Improvements
 
 * [PR#2251](https://github.com/lightninglabs/taproot-assets/pull/2251)
