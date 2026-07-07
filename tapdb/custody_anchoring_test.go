@@ -142,3 +142,50 @@ func TestReceiveAnchoringPersistence(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, assets, 0)
 }
+
+// TestReceiveAnchoringReconfirmBeforeProofs asserts that reconfirmation
+// converges what exists and skips what doesn't: an anchored asset whose
+// proof file is not yet materialized (the minting path's first witness
+// delivery precedes the cultivator's proof writes, which that delivery
+// itself unblocks) must not fail the delivery transaction.
+func TestReceiveAnchoringReconfirmBeforeProofs(t *testing.T) {
+	t.Parallel()
+
+	db := NewTestDB(t)
+	_, assetsStore := newAssetStoreFromDB(db.BaseDB)
+	ctx := context.Background()
+
+	executor := NewTransactionExecutor(
+		db, func(tx *sql.Tx) *sqlc.Queries {
+			return db.WithTx(tx)
+		},
+	)
+
+	// One anchored asset with no stored proof file.
+	assetGen := newAssetGenerator(t, 1, 1)
+	assetGen.genAssets(t, assetsStore, []assetDesc{{
+		assetGen:    assetGen.assetGens[0],
+		anchorPoint: assetGen.anchorPoints[0],
+		amt:         10,
+	}})
+
+	anchorTx := assetGen.anchorTxs[0]
+	anchorTxid := anchorTx.TxHash()
+
+	blockHash, header, merkle := blockContextFor(t, anchorTx, 10)
+	err := executor.ExecTx(
+		ctx, WriteTxOption(), func(q *sqlc.Queries) error {
+			return assetsStore.ApplyReceiveReconfirm(
+				ctx, q, anchorTxid, blockHash, 700, 0,
+				header, merkle,
+			)
+		},
+	)
+	require.NoError(t, err)
+
+	// The chain transaction's confirmation converged even though no
+	// proof could be patched.
+	chainTx, err := db.FetchChainTx(ctx, anchorTxid[:])
+	require.NoError(t, err)
+	require.Equal(t, blockHash[:], chainTx.BlockHash)
+}

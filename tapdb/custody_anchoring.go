@@ -3,6 +3,8 @@ package tapdb
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -48,7 +50,17 @@ func (a *AssetStore) ApplyReceiveReconfirm(ctx context.Context,
 
 	for _, assetID := range assetIDs {
 		blob, err := q.AssetProofBlobByAssetID(ctx, assetID)
-		if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// The asset's proof file is not yet materialized.
+			// On the minting path the first witness delivery
+			// precedes the cultivator's confirmation branch —
+			// which this delivery itself unblocks, and which
+			// writes the proof with this same block context.
+			// Converge what exists; skip what doesn't.
+			continue
+
+		case err != nil:
 			return fmt.Errorf("unable to fetch proof for "+
 				"asset %d: %w", assetID, err)
 		}
