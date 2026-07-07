@@ -227,7 +227,7 @@ type Config struct {
 	// received transfers with as speculative anchorings. When set,
 	// received state converges through the watcher's registry
 	// instead of the legacy proof watcher.
-	AnchoringWatcher *tapreorg.Watcher
+	AnchoringWatcher tapreorg.Registrar
 
 	// AnchoringLog is the transaction-scoped persistence surface the
 	// receive site drives from its watcher handlers.
@@ -236,10 +236,6 @@ type Config struct {
 	// AnchoringThreshold is the confirmation depth at which the
 	// receive side considers a transfer act-confirmed (buried).
 	AnchoringThreshold uint32
-
-	// ProofWatcher is used to watch new proofs for their anchor transaction
-	// to be confirmed safely with a minimum number of confirmations.
-	ProofWatcher proof.Watcher
 
 	// IgnoreChecker is an optional function that can be used to check if
 	// a proof should be ignored.
@@ -1735,31 +1731,19 @@ func (c *Custodian) setReceiveCompleted(event *address.Event,
 	// notice if the anchor transaction is re-organized out of the chain,
 	// the receive registers with the re-org watcher as a speculative
 	// anchoring; its handlers converge received state to whatever the
-	// chain answers. Files whose trigger set cannot be derived (a
-	// single-proof genesis file), or deployments without the watcher,
-	// fall back to the legacy proof watcher.
-	registered := false
-	if c.cfg.AnchoringWatcher != nil {
-		err := c.RegisterReceiveAnchoring(ctxt, proofFile)
-		switch {
-		case err == nil:
-			registered = true
+	// chain answers. A file whose trigger set cannot be derived (a
+	// single-proof genesis file has no asset-bearing input) cannot be
+	// staked; the condition is surfaced rather than silently dropped.
+	err := c.RegisterReceiveAnchoring(ctxt, proofFile)
+	switch {
+	case errors.Is(err, ErrNoTriggers):
+		log.Warnf("Received proof file has no derivable trigger "+
+			"outpoints, not watching it for re-orgs "+
+			"(event=%v)", event.Outpoint)
 
-		case errors.Is(err, ErrNoTriggers):
-
-		default:
-			return fmt.Errorf("error registering receive "+
-				"anchoring: %w", err)
-		}
-	}
-	if !registered {
-		err := c.cfg.ProofWatcher.MaybeWatch(
-			proofFile, c.cfg.ProofWatcher.DefaultUpdateCallback(),
-		)
-		if err != nil {
-			return fmt.Errorf("error watching received proof: "+
-				"%w", err)
-		}
+	case err != nil:
+		return fmt.Errorf("error registering receive "+
+			"anchoring: %w", err)
 	}
 
 	// Do we have all proofs for all outputs of the event? If not, then we
@@ -1790,7 +1774,7 @@ func (c *Custodian) setReceiveCompleted(event *address.Event,
 	log.Debugf("All proofs received for event %s, completing it",
 		event.Outpoint)
 
-	err := c.cfg.AddrBook.CompleteEvent(
+	err = c.cfg.AddrBook.CompleteEvent(
 		ctxt, event, address.StatusCompleted, event.Outpoint,
 	)
 	if err != nil {

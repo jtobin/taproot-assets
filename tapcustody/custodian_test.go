@@ -27,8 +27,8 @@ import (
 	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightninglabs/taproot-assets/tapcustody"
 	"github.com/lightninglabs/taproot-assets/tapdb"
-	"github.com/lightninglabs/taproot-assets/tapgarden"
 	"github.com/lightninglabs/taproot-assets/tapnode/tapnodemock"
+	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightninglabs/taproot-assets/universe"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/keychain"
@@ -379,7 +379,7 @@ func newHarness(t *testing.T,
 	courierDispatch := &proof.MockProofCourierDispatcher{
 		Courier: courier,
 	}
-	proofWatcher := &tapgarden.MockProofWatcher{}
+	registrar := tapreorg.NewMockRegistrar()
 
 	ctxb := context.Background()
 	for _, initialAddr := range initialAddrs {
@@ -401,7 +401,7 @@ func newHarness(t *testing.T,
 		ProofArchive:           archive,
 		ProofNotifier:          notifier,
 		ProofCourierDispatcher: courierDispatch,
-		ProofWatcher:           proofWatcher,
+		AnchoringWatcher:       registrar,
 		MboxInsecure:           true,
 		ErrChan:                errChan,
 	}

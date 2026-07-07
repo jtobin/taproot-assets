@@ -149,10 +149,6 @@ type AuxSweeperCfg struct {
 	// form's anchoring abandons and compensates its rows.
 	AnchoringRegistrar ReceiveAnchoringRegistrar
 
-	// ProofWatcher is used to watch proofs we import for their anchor
-	// transaction being re-organized out of the chain, so their block
-	// info can be patched once it re-confirms.
-	ProofWatcher proof.Watcher
 }
 
 // AuxSweeper is used to sweep funds from a commitment transaction that has
@@ -1689,34 +1685,22 @@ func (a *AuxSweeper) materializeAssetOutputs(ctx context.Context,
 			return fmt.Errorf("unable to import proof: %w", err)
 		}
 
-		// Hand the imported state to the re-org watcher: as a
-		// speculative anchoring when the registrar is available (and
-		// a trigger set is derivable from the file), falling back to
-		// the legacy proof watcher otherwise.
-		registered := false
-		if a.cfg.AnchoringRegistrar != nil {
-			err := a.cfg.AnchoringRegistrar.
-				RegisterReceiveAnchoring(ctx, &proofFile)
-			switch {
-			case err == nil:
-				registered = true
+		// Hand the imported state to the re-org watcher as a
+		// speculative anchoring. A file with no derivable trigger
+		// set cannot be staked; the condition is surfaced rather
+		// than silently dropped.
+		err = a.cfg.AnchoringRegistrar.RegisterReceiveAnchoring(
+			ctx, &proofFile,
+		)
+		switch {
+		case errors.Is(err, tapcustody.ErrNoTriggers):
+			log.Warnf("Swept proof file has no derivable "+
+				"trigger outpoints, not watching it for "+
+				"re-orgs (outpoint=%v)", outProof.OutPoint())
 
-			case errors.Is(err, tapcustody.ErrNoTriggers):
-
-			default:
-				return fmt.Errorf("unable to register sweep "+
-					"anchoring: %w", err)
-			}
-		}
-		if !registered {
-			err = a.cfg.ProofWatcher.WatchProofs(
-				[]*proof.Proof{outProof},
-				a.cfg.ProofWatcher.DefaultUpdateCallback(),
-			)
-			if err != nil {
-				return fmt.Errorf("unable to watch proof: "+
-					"%w", err)
-			}
+		case err != nil:
+			return fmt.Errorf("unable to register sweep "+
+				"anchoring: %w", err)
 		}
 	}
 

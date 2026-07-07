@@ -12059,34 +12059,18 @@ func (r *RPCServer) RegisterTransfer(ctx context.Context,
 	}
 
 	// In case this proof hasn't been buried sufficiently, register it
-	// with the re-org watcher: as a speculative anchoring when the
-	// anchoring watcher is available (and a trigger set is derivable
-	// from the file), falling back to the legacy proof watcher
-	// otherwise.
-	registered := false
-	if r.cfg.AnchoringWatcher != nil && r.cfg.AssetCustodian != nil {
-		err := r.cfg.AssetCustodian.RegisterReceiveAnchoring(
-			ctx, proofFile,
-		)
-		switch {
-		case err == nil:
-			registered = true
+	// with the re-org watcher as a speculative anchoring. A file with
+	// no derivable trigger set cannot be staked; the condition is
+	// surfaced rather than silently dropped.
+	err = r.cfg.AssetCustodian.RegisterReceiveAnchoring(ctx, proofFile)
+	switch {
+	case errors.Is(err, tapcustody.ErrNoTriggers):
+		rpcsLog.Warnf("Registered proof file has no derivable " +
+			"trigger outpoints, not watching it for re-orgs")
 
-		case errors.Is(err, tapcustody.ErrNoTriggers):
-
-		default:
-			return nil, fmt.Errorf("error registering receive "+
-				"anchoring: %w", err)
-		}
-	}
-	if !registered {
-		err = r.cfg.ReOrgWatcher.MaybeWatch(
-			proofFile, r.cfg.ReOrgWatcher.DefaultUpdateCallback(),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("error watching received "+
-				"proof: %w", err)
-		}
+	case err != nil:
+		return nil, fmt.Errorf("error registering receive "+
+			"anchoring: %w", err)
 	}
 
 	lastProof, err := proofFile.LastProof()
