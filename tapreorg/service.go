@@ -681,6 +681,14 @@ func (w *Watcher) startSensor(ctx context.Context,
 	// in the chain — a candidate recorded on-chain that fell out
 	// while we were down would otherwise stay on-chain forever.
 	// Verify each recorded location against the dominant chain.
+	//
+	// A GetBlockHash error is treated as "unknown, retry later": it
+	// is almost always a transient notifier hiccup, and the
+	// reconciliation sweep will re-check on its next tick. The
+	// alternative — flipping OnChain=false on any error — spuriously
+	// downgrades every recorded on-chain candidate on a startup with
+	// a slow notifier, firing every site's OnUnwitnessed/OnConflicted
+	// handlers for what turns out to be a still-buried tx.
 	for i := range anchoring.Spends {
 		candidate := anchoring.Spends[i]
 		if !candidate.OnChain {
@@ -690,7 +698,16 @@ func (w *Watcher) startSensor(ctx context.Context,
 		hash, err := w.cfg.Notifier.GetBlockHash(
 			ctx, int64(candidate.W.Height()),
 		)
-		if err == nil && hash == candidate.W.BlockHash() {
+		switch {
+		case err != nil:
+			log.Warnf("Anchoring %d: unable to verify candidate "+
+				"%v location at height %d, sweep will "+
+				"retry: %v", anchoring.ID,
+				candidate.W.TxHash(), candidate.W.Height(),
+				err)
+			continue
+
+		case hash == candidate.W.BlockHash():
 			continue
 		}
 
