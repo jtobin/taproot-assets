@@ -570,7 +570,6 @@ func (m *MockProofArchive) ImportProofs(context.Context,
 	return nil
 }
 
-
 type FallibleTapscriptTreeMgr struct {
 	store               asset.TapscriptTreeManager
 	FailLoad, FailStore bool

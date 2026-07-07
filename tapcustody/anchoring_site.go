@@ -269,20 +269,16 @@ func (c *Custodian) RegisterReceiveAnchoring(ctx context.Context,
 	// One anchoring per anchor transaction: if a previous receive
 	// (or another output of the same send) already registered it,
 	// nothing to do.
-	existing, err := c.cfg.AnchoringWatcher.AllAnchorings(
-		ctx, ReceiveSiteID,
+	matchKey := anchorTxid.CloneBytes()
+	existing, err := c.cfg.AnchoringWatcher.LookupByMatchKey(
+		ctx, ReceiveSiteID, matchKey,
 	)
 	if err != nil {
-		return fmt.Errorf("unable to list anchorings: %w", err)
+		return fmt.Errorf("unable to look up receive anchoring: "+
+			"%w", err)
 	}
-	for _, anchoring := range existing {
-		txid, err := decodeReceiveBlob(anchoring.Payload)
-		if err != nil {
-			continue
-		}
-		if txid == anchorTxid {
-			return nil
-		}
+	if existing != nil {
+		return nil
 	}
 
 	// A file with derivable asset-bearing triggers registers the
@@ -298,6 +294,7 @@ func (c *Custodian) RegisterReceiveAnchoring(ctx context.Context,
 		Site:      ReceiveSiteID,
 		MatchData: blob,
 		Payload:   blob,
+		MatchKey:  matchKey,
 		Threshold: c.cfg.AnchoringThreshold,
 	}
 

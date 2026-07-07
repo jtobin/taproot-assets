@@ -86,6 +86,11 @@ type AnchoringRegistrar interface {
 	// settled ones included.
 	AllAnchorings(ctx context.Context,
 		site tapreorg.SiteID) ([]*tapreorg.Anchoring, error)
+
+	// LookupByMatchKey returns the site's existing anchoring for
+	// this per-site identity key, or (nil, nil) if none.
+	LookupByMatchKey(ctx context.Context, site tapreorg.SiteID,
+		matchKey []byte) (*tapreorg.Anchoring, error)
 }
 
 // SupplyAnchoringLog is the supply site's persistence surface,
@@ -322,18 +327,16 @@ func registerCommitAnchoring(ctx context.Context, env *Environment,
 	var rawGroupKey [33]byte
 	copy(rawGroupKey[:], groupKey.SerializeCompressed())
 
-	existing, err := env.AnchoringWatcher.AllAnchorings(ctx, SupplySiteID)
+	matchKey := commitTxid.CloneBytes()
+	existing, err := env.AnchoringWatcher.LookupByMatchKey(
+		ctx, SupplySiteID, matchKey,
+	)
 	if err != nil {
-		return fmt.Errorf("unable to list anchorings: %w", err)
+		return fmt.Errorf("unable to look up supply commit "+
+			"anchoring: %w", err)
 	}
-	for _, anchoring := range existing {
-		blob, err := decodeSupplyBlob(anchoring.Payload)
-		if err != nil {
-			continue
-		}
-		if blob.CommitTxid == commitTxid {
-			return nil
-		}
+	if existing != nil {
+		return nil
 	}
 
 	// Input scripts and confirmation heights come from the durable
@@ -436,6 +439,7 @@ func registerCommitAnchoring(ctx context.Context, env *Environment,
 			Triggers:  triggers,
 			MatchData: blob,
 			Payload:   blob,
+			MatchKey:  matchKey,
 			Threshold: env.AnchoringThreshold,
 		}, nil,
 	)

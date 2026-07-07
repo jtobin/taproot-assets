@@ -747,3 +747,65 @@ func TestReorgRegistrySeedCandidateValidation(t *testing.T) {
 	spec.SeedCandidate.MerkleProof = &proof.TxMerkleProof{}
 	require.NoError(t, spec.Validate())
 }
+
+// TestReorgRegistryLookupByMatchKey asserts the indexed identity
+// lookup: registrations with a MatchKey are stored under (site,
+// match_key), a second Register with the same key hits the unique
+// constraint, and LookupByMatchKey returns the anchoring in O(1). An
+// empty match key disables the check.
+func TestReorgRegistryLookupByMatchKey(t *testing.T) {
+	t.Parallel()
+
+	store, _ := newReorgStore(t)
+	ctx := context.Background()
+
+	spec := testSpec(t, "porter", testOutPoint(1, 0))
+	spec.MatchKey = []byte("txid-1")
+
+	id, err := store.Register(ctx, spec, 500, nil)
+	require.NoError(t, err)
+
+	// Round-trip through GetAnchoring surfaces the key.
+	anchoring, err := store.GetAnchoring(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, spec.MatchKey, anchoring.MatchKey)
+
+	// Indexed lookup returns the same anchoring.
+	found, err := store.LookupByMatchKey(ctx, "porter", spec.MatchKey)
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	require.Equal(t, id, found.ID)
+
+	// Miss returns (nil, nil).
+	miss, err := store.LookupByMatchKey(ctx, "porter", []byte("nope"))
+	require.NoError(t, err)
+	require.Nil(t, miss)
+
+	// Empty key returns (nil, nil) without hitting the index.
+	miss, err = store.LookupByMatchKey(ctx, "porter", nil)
+	require.NoError(t, err)
+	require.Nil(t, miss)
+
+	// Registering the same site + match_key again hits the unique
+	// partial index.
+	dup := testSpec(t, "porter", testOutPoint(2, 0))
+	dup.MatchKey = spec.MatchKey
+	_, err = store.Register(ctx, dup, 500, nil)
+	require.Error(t, err)
+
+	// A registration with the same key at a DIFFERENT site is fine:
+	// the index is per-site.
+	crossSite := testSpec(t, "custody", testOutPoint(3, 0))
+	crossSite.MatchKey = spec.MatchKey
+	_, err = store.Register(ctx, crossSite, 500, nil)
+	require.NoError(t, err)
+
+	// Two registrations at the same site with NULL match_key coexist:
+	// the unique index excludes null keys.
+	free1 := testSpec(t, "porter", testOutPoint(4, 0))
+	_, err = store.Register(ctx, free1, 500, nil)
+	require.NoError(t, err)
+	free2 := testSpec(t, "porter", testOutPoint(5, 0))
+	_, err = store.Register(ctx, free2, 500, nil)
+	require.NoError(t, err)
+}

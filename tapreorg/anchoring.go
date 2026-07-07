@@ -284,6 +284,15 @@ type RegistrationSpec struct {
 	// considers an outcome final (act-confirmed).
 	Threshold uint32
 
+	// MatchKey is the site's per-registration identity key. Two
+	// registrations by the same site with the same MatchKey refer
+	// to the same essential fact; the registry enforces this via a
+	// unique index and sites use it to look up their own existing
+	// anchorings in O(1) via LookupByPayload. Sites use the
+	// anchor/genesis/commit txid as the key; empty is allowed for
+	// tests and legacy rows and disables the uniqueness constraint.
+	MatchKey []byte
+
 	// SeedCandidate, when set, is a fully-enriched candidate spend
 	// the caller already knows about (e.g. a received proof file's
 	// tip anchor tx). The registry inserts it at registration and
@@ -343,6 +352,10 @@ type Anchoring struct {
 
 	// Payload is the site's opaque repair/finalize data.
 	Payload VersionedBlob
+
+	// MatchKey is the site's per-registration identity key; see
+	// RegistrationSpec.MatchKey.
+	MatchKey []byte
 
 	// Threshold is the act-confirmation depth for this anchoring.
 	Threshold uint32

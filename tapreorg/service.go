@@ -298,6 +298,14 @@ func (w *Watcher) Anchorings(ctx context.Context,
 	return out, nil
 }
 
+// LookupByMatchKey reads a site's anchoring by its per-site identity
+// key. See Registrar.LookupByMatchKey for the contract.
+func (w *Watcher) LookupByMatchKey(ctx context.Context, site SiteID,
+	matchKey []byte) (*Anchoring, error) {
+
+	return w.cfg.Registry.LookupByMatchKey(ctx, site, matchKey)
+}
+
 // AllAnchorings reads one site's anchorings across every phase,
 // settled ones included. Identity lookups — a resumed subsystem
 // re-finding its stake, a registration deduplicating by payload —

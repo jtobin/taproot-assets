@@ -93,6 +93,13 @@ type Registry interface {
 	// AllAnchorings returns every anchoring, live and settled.
 	AllAnchorings(ctx context.Context) ([]*Anchoring, error)
 
+	// LookupByMatchKey returns the site's anchoring with the given
+	// match key, or (nil, nil) if none exists. The registry
+	// enforces (site_id, match_key) uniqueness on non-null keys,
+	// so this is O(1) via index.
+	LookupByMatchKey(ctx context.Context, site SiteID,
+		matchKey []byte) (*Anchoring, error)
+
 	// ChainView assembles the anchoring's chain view: its
 	// candidate spends plus its strongest staged foreclosure.
 	ChainView(ctx context.Context, id AnchoringID) (ChainView, error)

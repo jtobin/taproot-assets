@@ -106,6 +106,7 @@ func (s *ReorgRegistryStore) Register(ctx context.Context,
 				MatchData:         orEmpty(spec.MatchData.Data),
 				PayloadVersion:    int16(spec.Payload.Version),
 				PayloadData:       orEmpty(spec.Payload.Data),
+				MatchKey:          spec.MatchKey,
 				CreatedHeight:     int32(createdHeight),
 				PhaseCode:         int16(unwitnessedCode),
 				PhaseEvidence:     orEmpty(unwitnessedEv),
@@ -275,6 +276,41 @@ func (s *ReorgRegistryStore) AllAnchorings(
 		}
 
 		return nil
+	})
+	if dbErr != nil {
+		return nil, dbErr
+	}
+
+	return out, nil
+}
+
+// LookupByMatchKey returns the site's anchoring for the given
+// per-site identity key via the (site_id, match_key) unique index.
+// An empty match key or a miss both return (nil, nil).
+func (s *ReorgRegistryStore) LookupByMatchKey(ctx context.Context,
+	site tapreorg.SiteID, matchKey []byte) (*tapreorg.Anchoring, error) {
+
+	if len(matchKey) == 0 {
+		return nil, nil
+	}
+
+	var out *tapreorg.Anchoring
+	dbErr := s.db.ExecTx(ctx, ReadTxOption(), func(q *sqlc.Queries) error {
+		row, err := q.LookupReorgAnchoringByMatchKey(
+			ctx, sqlc.LookupReorgAnchoringByMatchKeyParams{
+				SiteID:   string(site),
+				MatchKey: matchKey,
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		out, err = assembleAnchoring(ctx, q, row)
+		return err
 	})
 	if dbErr != nil {
 		return nil, dbErr
@@ -870,6 +906,7 @@ func assembleAnchoring(ctx context.Context, q *sqlc.Queries,
 			Version: uint16(row.PayloadVersion),
 			Data:    row.PayloadData,
 		},
+		MatchKey:         row.MatchKey,
 		CreatedHeight:    uint32(row.CreatedHeight),
 		Phase:            phase,
 		DeliveredPhase:   delivered,

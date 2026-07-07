@@ -1,6 +1,7 @@
 package tapreorg
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -26,6 +27,14 @@ type Registrar interface {
 	// settled ones included.
 	AllAnchorings(ctx context.Context,
 		site SiteID) ([]*Anchoring, error)
+
+	// LookupByMatchKey returns the site's existing anchoring for
+	// this identity key, or (nil, nil) if none. Sites use this at
+	// registration time to deduplicate by essential identity in
+	// O(1), rather than scanning AllAnchorings and decoding each
+	// payload.
+	LookupByMatchKey(ctx context.Context, site SiteID,
+		matchKey []byte) (*Anchoring, error)
 
 	// Anchoring reads a single anchoring by identifier.
 	Anchoring(ctx context.Context, id AnchoringID) (*Anchoring, error)
@@ -78,6 +87,7 @@ func (m *MockRegistrar) Register(_ context.Context, spec RegistrationSpec,
 		Triggers:       spec.Triggers,
 		MatchData:      spec.MatchData,
 		Payload:        spec.Payload,
+		MatchKey:       append([]byte(nil), spec.MatchKey...),
 		Threshold:      spec.Threshold,
 		Phase:          Unwitnessed{},
 		DeliveredPhase: Unwitnessed{},
@@ -116,6 +126,26 @@ func (m *MockRegistrar) AllAnchorings(_ context.Context,
 	}
 
 	return out, nil
+}
+
+// LookupByMatchKey scans the recorded anchorings for one whose site
+// and match key equal the arguments.
+func (m *MockRegistrar) LookupByMatchKey(_ context.Context, site SiteID,
+	matchKey []byte) (*Anchoring, error) {
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, anchoring := range m.anchorings {
+		if anchoring.Site != site {
+			continue
+		}
+		if bytes.Equal(anchoring.MatchKey, matchKey) {
+			return anchoring, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // Anchoring reads a recorded anchoring.

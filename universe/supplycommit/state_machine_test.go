@@ -156,9 +156,14 @@ func newSupplyCommitTestHarness(t *testing.T,
 	// anchoring behavior explicitly get a permissive registrar.
 	if cfg.anchoringWatcher == nil {
 		registrar := &mockAnchoringRegistrar{}
+		var noAnchoring *tapreorg.Anchoring
 		registrar.On(
 			"AllAnchorings", mock.Anything, mock.Anything,
 		).Return([]*tapreorg.Anchoring{}, nil).Maybe()
+		registrar.On(
+			"LookupByMatchKey", mock.Anything, mock.Anything,
+			mock.Anything,
+		).Return(noAnchoring, nil).Maybe()
 		registrar.On(
 			"Register", mock.Anything, mock.Anything,
 			mock.Anything,

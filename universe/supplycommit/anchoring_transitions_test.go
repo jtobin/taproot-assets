@@ -36,6 +36,17 @@ func (m *mockAnchoringRegistrar) AllAnchorings(ctx context.Context,
 	return args.Get(0).([]*tapreorg.Anchoring), args.Error(1)
 }
 
+func (m *mockAnchoringRegistrar) LookupByMatchKey(ctx context.Context,
+	site tapreorg.SiteID, matchKey []byte) (*tapreorg.Anchoring,
+	error) {
+
+	args := m.Called(ctx, site, matchKey)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*tapreorg.Anchoring), args.Error(1)
+}
+
 // expectFetchState arranges the durable record the resting state
 // re-derives from.
 func (h *supplyCommitTestHarness) expectFetchState(state State,
@@ -136,9 +147,11 @@ func TestSupplyCommitBroadcastRestingTick(t *testing.T) {
 		// registers the anchoring with the watcher.
 		h.expectFullCommitmentCycleMocks(true)
 
+		var noAnchoring *tapreorg.Anchoring
 		registrar.On(
-			"AllAnchorings", mock.Anything, SupplySiteID,
-		).Return([]*tapreorg.Anchoring{}, nil).Once()
+			"LookupByMatchKey", mock.Anything, SupplySiteID,
+			mock.Anything,
+		).Return(noAnchoring, nil).Once()
 		registrar.On(
 			"Register", mock.Anything, mock.Anything,
 			mock.Anything,
