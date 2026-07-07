@@ -20,6 +20,7 @@ import (
 	"github.com/lightninglabs/taproot-assets/internal/test"
 	"github.com/lightninglabs/taproot-assets/mssmt"
 	"github.com/lightninglabs/taproot-assets/proof"
+	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightninglabs/taproot-assets/tapsend"
 	"github.com/lightninglabs/taproot-assets/universe"
 	"github.com/lightningnetwork/lnd/chainntnfs"
@@ -150,6 +151,20 @@ func newSupplyCommitTestHarness(t *testing.T,
 	mCache := &mockIgnoreCheckerCache{}
 	mAssetLookup := &MockAssetLookup{}
 	mSupplySyncer := &mockSupplySyncer{}
+
+	// The re-org watcher is mandatory; tests that don't drive
+	// anchoring behavior explicitly get a permissive registrar.
+	if cfg.anchoringWatcher == nil {
+		registrar := &mockAnchoringRegistrar{}
+		registrar.On(
+			"AllAnchorings", mock.Anything, mock.Anything,
+		).Return([]*tapreorg.Anchoring{}, nil).Maybe()
+		registrar.On(
+			"Register", mock.Anything, mock.Anything,
+			mock.Anything,
+		).Return(tapreorg.AnchoringID(1), nil).Maybe()
+		cfg.anchoringWatcher = registrar
+	}
 
 	env := &Environment{
 		AssetSpec:          cfg.assetSpec,
@@ -301,7 +316,7 @@ func (h *supplyCommitTestHarness) expectFullCommitmentCycleMocks(
 	h.expectInsertSignedCommitTx()
 	h.expectAssetLookup()
 	h.expectSupplySyncer()
-	h.expectBroadcastAndConfRegistration()
+	h.expectBroadcastAndAnchoring()
 }
 
 // assertHandlesInvalidEvent checks that the state machine correctly handles an
@@ -485,18 +500,52 @@ func (h *supplyCommitTestHarness) expectInsertSignedCommitTx() {
 	).Return(nil).Once()
 }
 
-func (h *supplyCommitTestHarness) expectBroadcastAndConfRegistration() {
-	h.mockDaemon.On(
-		"BroadcastTransaction", mock.Anything, mock.Anything,
-	).Return(nil).Once()
+// expectBroadcastAndAnchoring arranges what the broadcast state needs:
+// the durable transition it re-derives before acting (whose commit
+// transaction spends a known pre-commitment, so the anchoring's
+// trigger set is non-empty) and the transaction broadcast. The
+// registration itself rides the harness's permissive registrar.
+func (h *supplyCommitTestHarness) expectBroadcastAndAnchoring() {
+	h.t.Helper()
 
-	h.mockChain.On("CurrentHeight", mock.Anything).Return(
-		uint32(123), nil,
+	preCommitTx := wire.NewMsgTx(2)
+	preCommitTx.AddTxOut(&wire.TxOut{
+		Value:    1_000,
+		PkScript: test.RandBytes(34),
+	})
+	preCommitKey, _ := test.RandKeyDesc(h.t)
+	preCommit := PreCommitment{
+		BlockHeight: 1,
+		MintingTxn:  preCommitTx,
+		OutIdx:      0,
+		InternalKey: preCommitKey,
+	}
+	commitTx := wire.NewMsgTx(2)
+	commitTx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: preCommit.OutPoint(),
+	})
+	commitTx.AddTxOut(&wire.TxOut{
+		Value:    1_000,
+		PkScript: test.RandBytes(34),
+	})
+
+	transition := SupplyStateTransition{
+		NewCommitment: RootCommitment{
+			Txn: commitTx,
+			SupplyRoot: mssmt.NewComputedBranch(
+				mssmt.EmptyTreeRootHash, 0,
+			),
+		},
+		UnspentPreCommits: []PreCommitment{preCommit},
+	}
+	h.mockStateLog.On(
+		"FetchState", mock.Anything, mock.Anything,
+	).Return(
+		&CommitBroadcastState{}, lfn.Some(transition), nil,
 	).Once()
 
 	h.mockDaemon.On(
-		"RegisterConfirmationsNtfn", mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything,
+		"BroadcastTransaction", mock.Anything, mock.Anything,
 	).Return(nil).Once()
 }
 
@@ -1000,7 +1049,7 @@ func TestSupplyCommitTxSignStateTransitions(t *testing.T) {
 
 		h.expectPsbtSigning()
 		h.expectInsertSignedCommitTx()
-		h.expectBroadcastAndConfRegistration()
+		h.expectBroadcastAndAnchoring()
 
 		fundedPsbt := newTestFundedPsbt(t, dummyTx)
 
@@ -1066,160 +1115,30 @@ func TestSupplyCommitBroadcastStateTransitions(t *testing.T) {
 
 	randGroupKey := test.RandPubKey(t)
 	defaultAssetSpec := asset.NewSpecifierFromGroupKey(*randGroupKey)
-	dummyTx := wire.NewMsgTx(2)
-	dummyTx.AddTxOut(&wire.TxOut{PkScript: []byte("testscript"), Value: 1})
-	initialTransition := SupplyStateTransition{
-		NewCommitment: RootCommitment{
-			Txn: dummyTx,
-			SupplyRoot: mssmt.NewBranch(
-				mssmt.NewLeafNode([]byte("L"), 0),
-				mssmt.NewLeafNode([]byte("R"), 0),
-			),
-		},
-		ChainProof: lfn.Some(ChainProof{}),
-	}
 
-	// This test verifies that a BroadcastEvent received by the
-	// CommitBroadcastState results in a self-transition to the same state
-	// and emits daemon events.
+	// A BroadcastEvent re-derives the pending transition from the
+	// durable record, broadcasts the commit transaction, registers
+	// the anchoring and rests.
 	t.Run("broadcast_event", func(t *testing.T) {
 		h := newSupplyCommitTestHarness(t, &harnessCfg{
-			initialState: &CommitBroadcastState{
-				SupplyTransition: initialTransition,
-			},
-			assetSpec: defaultAssetSpec,
+			initialState: &CommitBroadcastState{},
+			assetSpec:    defaultAssetSpec,
 		})
 		h.start()
 		defer h.stopAndAssert()
 
-		signedPsbt := newTestSignedPsbt(t, dummyTx)
+		h.expectBroadcastAndAnchoring()
 
-		h.expectAssetLookup()
-		h.expectSupplySyncer()
-		h.expectBroadcastAndConfRegistration()
-
-		broadcastEvent := &BroadcastEvent{
-			SignedCommitPkt: signedPsbt,
-		}
-		h.sendEvent(broadcastEvent)
-
-		// A BroadcastEvent should result in a self-transition to the
-		// CommitBroadcastState.
+		h.sendEvent(&BroadcastEvent{})
 		h.assertStateTransitions(&CommitBroadcastState{})
 	})
 
-	// This test checks that a ConfEvent received by the
-	// CommitBroadcastState leads to a transition to CommitFinalizeState and
-	// the emission of a FinalizeEvent.
-	t.Run("conf_event", func(t *testing.T) {
-		h := newSupplyCommitTestHarness(t, &harnessCfg{
-			initialState: &CommitBroadcastState{
-				SupplyTransition: initialTransition,
-			},
-			assetSpec: defaultAssetSpec,
-		})
-		h.start()
-		defer h.stopAndAssert()
-
-		h.expectAssetLookup()
-		h.expectSupplySyncer()
-		h.expectCommitState()
-		h.expectApplyStateTransition()
-
-		// After applying the transition, the state machine checks for
-		// dangling updates.
-		h.expectBindDanglingUpdates()
-		h.expectIgnoreCheckerCacheInvalidation()
-
-		// A dummy block containing the transaction is created for the
-		// ConfEvent.
-		block := &wire.MsgBlock{
-			Header:       wire.BlockHeader{Timestamp: time.Now()},
-			Transactions: []*wire.MsgTx{dummyTx},
-		}
-		confEvent := &ConfEvent{
-			Tx:          dummyTx,
-			TxIndex:     0,
-			BlockHeight: 123,
-			Block:       block,
-		}
-		h.sendEvent(confEvent)
-
-		// After a ConfEvent, the state machine is expected to
-		// transition automatically through CommitFinalizeState and then
-		// back to DefaultState.
-		h.assertStateTransitions(
-			&CommitFinalizeState{}, &DefaultState{},
-		)
-	})
-
-	// This test verifies that a FinalizeEvent received by the
-	// CommitFinalizeState leads to a new commitment cycle if there are
-	// dangling updates.
-	t.Run("finalize_event_with_dangling_updates", func(t *testing.T) {
-		h := newSupplyCommitTestHarness(t, &harnessCfg{
-			initialState: &CommitFinalizeState{
-				SupplyTransition: initialTransition,
-			},
-			assetSpec: defaultAssetSpec,
-		})
-		h.start()
-		defer h.stopAndAssert()
-
-		h.expectAssetLookup()
-		h.expectSupplySyncer()
-		h.expectApplyStateTransition()
-
-		// Mock the binding of dangling updates to return a new set of
-		// events.
-		danglingUpdate := newTestMintEvent(
-			t, test.RandPubKey(t), randOutPoint(t),
-		)
-		h.expectBindDanglingUpdatesWithEvents(
-			[]SupplyUpdateEvent{danglingUpdate},
-		)
-		h.expectIgnoreCheckerCacheInvalidation()
-
-		// Set up expectations for the new commitment cycle that should
-		// be triggered immediately.
-		h.expectFullCommitmentCycleMocks(true)
-
-		finalizeEvent := &FinalizeEvent{}
-		h.sendEvent(finalizeEvent)
-
-		// The state machine should transition to CommitTreeCreateState
-		// and then cascade through the commitment process.
-		h.assertStateTransitions(
-			&CommitTreeCreateState{},
-			&CommitTxCreateState{},
-			&CommitTxSignState{},
-			&CommitBroadcastState{},
-			&CommitBroadcastState{},
-		)
-
-		// We can also check that the new CreateTreeEvent was emitted
-		// with the correct dangling updates. This is a bit tricky as
-		// the event is internal. We can check the state of the next
-		// state.
-		finalState := assertAndGetCurrentState[*CommitBroadcastState](h)
-		require.Len(
-			t, finalState.SupplyTransition.PendingUpdates, 1,
-		)
-		require.Equal(
-			t, danglingUpdate,
-			finalState.SupplyTransition.PendingUpdates[0],
-		)
-	})
-
-	// This test verifies that a SupplyUpdateEvent received by the
-	// CommitBroadcastState results in a self-transition after inserting
-	// the update.
+	// A SupplyUpdateEvent received while resting lands as a dangling
+	// update and the machine keeps resting.
 	t.Run("supply_update_event", func(t *testing.T) {
 		h := newSupplyCommitTestHarness(t, &harnessCfg{
-			initialState: &CommitBroadcastState{
-				SupplyTransition: initialTransition,
-			},
-			assetSpec: defaultAssetSpec,
+			initialState: &CommitBroadcastState{},
+			assetSpec:    defaultAssetSpec,
 		})
 		h.start()
 		defer h.stopAndAssert()
@@ -1237,130 +1156,14 @@ func TestSupplyCommitBroadcastStateTransitions(t *testing.T) {
 	// CommitBroadcastState results in an error being reported.
 	t.Run("unknown_event", func(t *testing.T) {
 		h := newSupplyCommitTestHarness(t, &harnessCfg{
-			initialState: &CommitBroadcastState{
-				SupplyTransition: initialTransition,
-			},
-			assetSpec: defaultAssetSpec,
+			initialState: &CommitBroadcastState{},
+			assetSpec:    defaultAssetSpec,
 		})
 		h.start()
 		defer h.stopAndAssert()
 
 		h.assertHandlesInvalidEvent(
 			&unknownEvent{}, ErrInvalidStateTransition,
-		)
-	})
-}
-
-// TestSupplyCommitFinalizeStateTransitions tests the transitions from the
-// CommitFinalizeState.
-func TestSupplyCommitFinalizeStateTransitions(t *testing.T) {
-	t.Parallel()
-
-	randGroupKey := test.RandPubKey(t)
-	defaultAssetSpec := asset.NewSpecifierFromGroupKey(*randGroupKey)
-	initialTransition := SupplyStateTransition{
-		NewCommitment: RootCommitment{
-			SupplyRoot: mssmt.NewBranch(
-				mssmt.NewLeafNode([]byte("dummy"), 0),
-				mssmt.NewLeafNode([]byte("leaf"), 0),
-			),
-		},
-		ChainProof: lfn.Some(ChainProof{}),
-	}
-
-	// This test verifies that a FinalizeEvent received by the
-	// CommitFinalizeState leads to a transition back to the DefaultState
-	// when there are no dangling updates.
-	t.Run("finalize_event_no_dangling", func(t *testing.T) {
-		h := newSupplyCommitTestHarness(t, &harnessCfg{
-			initialState: &CommitFinalizeState{
-				SupplyTransition: initialTransition,
-			},
-			assetSpec: defaultAssetSpec,
-		})
-		h.start()
-		defer h.stopAndAssert()
-
-		h.expectAssetLookup()
-		h.expectSupplySyncer()
-		h.expectApplyStateTransition()
-		h.expectBindDanglingUpdatesWithEvents([]SupplyUpdateEvent{})
-		h.expectIgnoreCheckerCacheInvalidation()
-
-		finalizeEvent := &FinalizeEvent{}
-		h.sendEvent(finalizeEvent)
-		h.assertStateTransitions(&DefaultState{})
-	})
-
-	// This test verifies that a SupplyUpdateEvent received by the
-	// CommitFinalizeState results in a self-transition after inserting
-	// the update.
-	t.Run("supply_update_event", func(t *testing.T) {
-		h := newSupplyCommitTestHarness(t, &harnessCfg{
-			initialState: &CommitFinalizeState{
-				SupplyTransition: initialTransition,
-			},
-			assetSpec: defaultAssetSpec,
-		})
-		h.start()
-		defer h.stopAndAssert()
-
-		mintEvent := newTestMintEvent(
-			t, test.RandPubKey(t), randOutPoint(t),
-		)
-		h.expectInsertPendingUpdate(mintEvent)
-		h.expectIgnoreCheckerCacheInvalidation()
-
-		h.sendEvent(mintEvent)
-		h.assertStateTransitions(&CommitFinalizeState{})
-	})
-
-	// This test ensures that an unknown event sent to the
-	// CommitFinalizeState results in an error being reported.
-	t.Run("unknown_event", func(t *testing.T) {
-		h := newSupplyCommitTestHarness(t, &harnessCfg{
-			initialState: &CommitFinalizeState{
-				SupplyTransition: initialTransition,
-			},
-			assetSpec: defaultAssetSpec,
-		})
-		h.start()
-		defer h.stopAndAssert()
-
-		h.assertHandlesInvalidEvent(
-			&unknownEvent{}, ErrInvalidStateTransition,
-		)
-	})
-
-	t.Run("finalize_with_asset_id_specifier", func(t *testing.T) {
-		assetIDSpec := asset.NewSpecifierFromId(testAssetID)
-
-		h := newSupplyCommitTestHarness(t, &harnessCfg{
-			initialState: &CommitFinalizeState{
-				SupplyTransition: initialTransition,
-			},
-			assetSpec: assetIDSpec,
-		})
-
-		h.expectAssetLookup()
-		h.expectSupplySyncer()
-		h.expectApplyStateTransition()
-
-		h.start()
-		defer h.stopAndAssert()
-
-		expectedErr := errors.New("group key must be specified for " +
-			"supply tree: unable to unwrap asset group public key")
-		h.expectFailure(expectedErr)
-
-		finalizeEvent := &FinalizeEvent{}
-		h.sendEvent(finalizeEvent)
-
-		h.assertNoStateTransitions()
-
-		require.ErrorContains(
-			t, h.mockErrReporter.GetReportedError(),
-			expectedErr.Error(),
 		)
 	})
 }
@@ -1872,55 +1675,31 @@ func TestDanglingUpdatesFullCycle(t *testing.T) {
 	h.sendEvent(danglingMint2)
 	h.assertStateTransitions(&CommitBroadcastState{})
 
-	// Next, we'll send in the confirmation event, and assert the normal
-	// state transitions.
-	h.expectCommitState()
-	h.expectApplyStateTransition()
-
-	// Mock the binding of dangling updates to return our two events.
-	h.expectBindDanglingUpdatesWithEvents([]SupplyUpdateEvent{
-		danglingMint1, danglingMint2,
-	})
-	h.expectIgnoreCheckerCacheInvalidation()
-
-	// Set up expectations for the second commitment cycle that will
-	// automatically start due to dangling updates.
+	// The re-org watcher finalizes the transition out-of-band, in its
+	// delivery transaction, binding the dangling updates into a fresh
+	// pending transition; its nudge arrives as a tick and the resting
+	// machine adopts the advanced record, rolling straight into the
+	// second cycle.
+	h.expectFetchState(
+		&UpdatesPendingState{},
+		lfn.Some(SupplyStateTransition{
+			PendingUpdates: []SupplyUpdateEvent{
+				danglingMint1, danglingMint2,
+			},
+		}),
+	)
+	h.expectFreezePendingTransition()
 	h.expectFullCommitmentCycleMocks(true)
 
-	// We'll now make a dummy block to send the confirmation event.
-	dummyTx := wire.NewMsgTx(2)
-	dummyTx.AddTxOut(&wire.TxOut{PkScript: []byte("test"), Value: 1})
-	block := &wire.MsgBlock{
-		Header:       wire.BlockHeader{Timestamp: time.Now()},
-		Transactions: []*wire.MsgTx{dummyTx},
-	}
-	confEvent := &ConfEvent{
-		Tx:          dummyTx,
-		TxIndex:     0,
-		BlockHeight: 123,
-		Block:       block,
-	}
-	h.sendEvent(confEvent)
+	h.sendEvent(&CommitTickEvent{})
 
-	// The state machine should now do another cycle as there are dangling
-	// updates.
 	h.assertStateTransitions(
-		&CommitFinalizeState{},
+		&UpdatesPendingState{},
 		&CommitTreeCreateState{},
 		&CommitTxCreateState{},
 		&CommitTxSignState{},
 		&CommitBroadcastState{},
 		&CommitBroadcastState{},
-	)
-
-	// Verify the dangling updates were included in the new cycle.
-	finalState := assertAndGetCurrentState[*CommitBroadcastState](h)
-	require.Len(t, finalState.SupplyTransition.PendingUpdates, 2)
-	require.Contains(
-		t, finalState.SupplyTransition.PendingUpdates, danglingMint1,
-	)
-	require.Contains(
-		t, finalState.SupplyTransition.PendingUpdates, danglingMint2,
 	)
 }
 
@@ -1977,40 +1756,25 @@ func TestDanglingUpdatesAcrossStates(t *testing.T) {
 			&CommitBroadcastState{},
 		)
 
-		h.expectAssetLookup()
-		h.expectSupplySyncer()
-		h.expectCommitState()
-		h.expectApplyStateTransition()
-
-		// We'll now return our two dangling updates we bound above.
-		h.expectBindDanglingUpdatesWithEvents(
-			[]SupplyUpdateEvent{update1, update2},
+		// The re-org watcher finalizes out-of-band, binding both
+		// dangling updates into a fresh pending transition; the
+		// nudge tick makes the resting machine adopt it and start
+		// the next cycle.
+		h.expectFetchState(
+			&UpdatesPendingState{},
+			lfn.Some(SupplyStateTransition{
+				PendingUpdates: []SupplyUpdateEvent{
+					update1, update2,
+				},
+			}),
 		)
-		h.expectIgnoreCheckerCacheInvalidation()
-
-		// Now, we'll set up again for the next cycle.
+		h.expectFreezePendingTransition()
 		h.expectFullCommitmentCycleMocks(true)
 
-		dummyTx := wire.NewMsgTx(2)
-		dummyTx.AddTxOut(
-			&wire.TxOut{PkScript: []byte("test"), Value: 1},
-		)
-		block := &wire.MsgBlock{
-			Header:       wire.BlockHeader{Timestamp: time.Now()},
-			Transactions: []*wire.MsgTx{dummyTx},
-		}
-		confEvent := &ConfEvent{
-			Tx:          dummyTx,
-			TxIndex:     0,
-			BlockHeight: 456,
-			Block:       block,
-		}
-		h.sendEvent(confEvent)
+		h.sendEvent(&CommitTickEvent{})
 
-		// Once we commit, we should go back to the finalize state and
-		// run through everything again as we have a dangling update.
 		h.assertStateTransitions(
-			&CommitFinalizeState{},
+			&UpdatesPendingState{},
 			&CommitTreeCreateState{},
 			&CommitTxCreateState{},
 			&CommitTxSignState{},
@@ -2035,8 +1799,6 @@ func TestStateAndEventMethods(t *testing.T) {
 			&CreateTxEvent{},
 			&SignTxEvent{},
 			&BroadcastEvent{},
-			&ConfEvent{},
-			&FinalizeEvent{},
 			&SpendEvent{},
 		}
 
@@ -2053,7 +1815,6 @@ func TestStateAndEventMethods(t *testing.T) {
 			&CommitTxCreateState{},
 			&CommitTxSignState{},
 			&CommitBroadcastState{},
-			&CommitFinalizeState{},
 		}
 
 		for _, s := range states {
@@ -2063,8 +1824,8 @@ func TestStateAndEventMethods(t *testing.T) {
 			_ = s.IsTerminal()
 		}
 
-		// Check terminal state explicitly.
-		require.True(t, (&CommitFinalizeState{}).IsTerminal())
+		// No state is terminal: the machine cycles.
+		require.False(t, (&CommitBroadcastState{}).IsTerminal())
 		require.False(t, (&DefaultState{}).IsTerminal())
 	})
 }

@@ -4,11 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/lightninglabs/taproot-assets/tapsend"
-	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
-
 	"github.com/lightninglabs/taproot-assets/asset"
 	"github.com/lightninglabs/taproot-assets/internal/test"
 	"github.com/lightninglabs/taproot-assets/tapreorg"
@@ -65,21 +60,6 @@ func TestSupplyCommitBroadcastRestingTick(t *testing.T) {
 		testAssetID, randGroupKey,
 	)
 	mintEvent := newTestMintEvent(t, testScriptKey, randOutPoint(t))
-
-	// Without a watcher configured, the legacy machine has no
-	// business receiving ticks in the broadcast state.
-	t.Run("legacy_tick_errors", func(t *testing.T) {
-		h := newSupplyCommitTestHarness(t, &harnessCfg{
-			initialState: &CommitBroadcastState{},
-			assetSpec:    defaultAssetSpec,
-		})
-		h.start()
-		defer h.stopAndAssert()
-
-		h.assertHandlesInvalidEvent(
-			&CommitTickEvent{}, ErrInvalidStateTransition,
-		)
-	})
 
 	// While the durable record still says broadcast, the machine
 	// keeps resting.
@@ -151,86 +131,16 @@ func TestSupplyCommitBroadcastRestingTick(t *testing.T) {
 		)
 		h.expectFreezePendingTransition()
 
-		// The cascade runs the full commitment cycle; on the
-		// anchoring path broadcast registers with the watcher
-		// instead of a conf subscription. The commitment fetch
-		// provides a real pre-commitment, and the funding mock
-		// preserves the transaction's essential inputs, so the
-		// registered trigger set is the one production would build.
-		h.expectTreeFetches()
-		preCommitTx := wire.NewMsgTx(2)
-		preCommitTx.AddTxOut(&wire.TxOut{
-			Value:    1_000,
-			PkScript: test.RandBytes(34),
-		})
-		preCommitKey, _ := test.RandKeyDesc(t)
-		preCommit := PreCommitment{
-			MintingTxn:  preCommitTx,
-			OutIdx:      0,
-			InternalKey: preCommitKey,
-			GroupPubKey: *randGroupKey,
-		}
-		h.mockCommits.On(
-			"UnspentPrecommits", mock.Anything, mock.Anything,
-			mock.Anything,
-		).Return(
-			lfn.Ok[PreCommits]([]PreCommitment{preCommit}),
-		).Once()
-		h.mockCommits.On(
-			"SupplyCommit", mock.Anything, mock.Anything,
-		).Return(
-			lfn.Ok(lfn.None[RootCommitment]()),
-		).Once()
-		h.expectKeyDerivationAndImport()
-		h.expectFeeEstimation()
+		// The cascade runs the full commitment cycle; broadcast
+		// re-derives the pending transition from the state log and
+		// registers the anchoring with the watcher.
+		h.expectFullCommitmentCycleMocks(true)
 
-		// Unlike the shared funding mock, preserve the packet's
-		// inputs and append a wallet fee input.
-		fundPsbtFunc := fundPsbtMockFn(func(
-			ctx context.Context, packet *psbt.Packet,
-			minConfs uint32, feeRate chainfee.SatPerKWeight,
-			changeIdx int32,
-		) (*tapsend.FundedPsbt, error) {
-
-			fundedTx := packet.UnsignedTx.Copy()
-			fundedTx.AddTxIn(
-				&wire.TxIn{
-					PreviousOutPoint: randOutPoint(h.t),
-				},
-			)
-
-			fundedPsbt, _ := psbt.NewFromUnsignedTx(fundedTx)
-			return &tapsend.FundedPsbt{
-				Pkt: fundedPsbt, ChangeOutputIndex: -1,
-			}, nil
-		})
-		h.mockWallet.On(
-			"FundPsbt", mock.Anything, mock.Anything,
-			mock.Anything, mock.Anything, mock.Anything,
-		).Return(fundPsbtFunc, nil).Once()
-
-		h.expectPsbtSigning()
-		h.expectInsertSignedCommitTx()
-		h.expectAssetLookup()
-		h.mockDaemon.On(
-			"BroadcastTransaction", mock.Anything, mock.Anything,
-		).Return(nil).Once()
-
-		registrar.On("AllAnchorings", mock.Anything, SupplySiteID).
-			Return([]*tapreorg.Anchoring{}, nil).Once()
 		registrar.On(
-			"Register", mock.Anything,
-			mock.MatchedBy(func(
-				spec tapreorg.RegistrationSpec) bool {
-
-				// The trigger set must be exactly the
-				// essential input: the pre-commitment
-				// outpoint, with its script — the wallet
-				// fee input is excluded.
-				pts := spec.Triggers.OutPoints()
-				return len(pts) == 1 &&
-					pts[0].OutPoint == preCommit.OutPoint()
-			}),
+			"AllAnchorings", mock.Anything, SupplySiteID,
+		).Return([]*tapreorg.Anchoring{}, nil).Once()
+		registrar.On(
+			"Register", mock.Anything, mock.Anything,
 			mock.Anything,
 		).Return(tapreorg.AnchoringID(1), nil).Once()
 

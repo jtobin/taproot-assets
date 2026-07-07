@@ -212,16 +212,14 @@ func (m *Manager) startAssetSM(ctx context.Context,
 	switch initialState.(type) {
 	// Once we write the commitment transaction to disk in CommitTxSign,
 	// then on restart, we'll be in the broadcast state. From this point,
-	// we'll trigger the broadcast event so we can resume the state machine.
+	// we'll trigger the broadcast event so we can resume the state
+	// machine: it re-derives the pending transition from the state log,
+	// re-broadcasts, and idempotently re-registers the anchoring. Rows
+	// persisted as the legacy finalize state load as this state too —
+	// a pending transition awaiting act-level finality is exactly what
+	// the broadcast state now means.
 	case *CommitBroadcastState:
 		newSm.SendEvent(ctx, &BroadcastEvent{})
-
-	// Once we get a confirmation, then we'll transition to the
-	// CommitFinalizeState. If we crashed right after that, then
-	// we'll also send the finalize event so we can apply
-	// everything, and transition back to the normal default state.
-	case *CommitFinalizeState:
-		newSm.SendEvent(ctx, &FinalizeEvent{})
 	}
 
 	return &newSm, nil

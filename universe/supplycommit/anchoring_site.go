@@ -336,11 +336,27 @@ func registerCommitAnchoring(ctx context.Context, env *Environment,
 		}
 	}
 
-	// Input scripts and confirmation heights come from the transition
-	// itself: the prior commitment's output and the pre-commitment
-	// outputs. The heights serve as spend-subscription hints — the
-	// notifier requires a positive hint, and an output cannot be
-	// spent before it was created.
+	// Input scripts and confirmation heights come from the durable
+	// record: the prior commitment's output and the unspent
+	// pre-commitment outputs. The transition reconstructed from the
+	// state log does not carry pre-commitments, so they are re-derived
+	// from the commitment tracker — the commit transaction is not yet
+	// confirmed, so its pre-commitment inputs are still unspent there.
+	// The heights serve as spend-subscription hints — the notifier
+	// requires a positive hint, and an output cannot be spent before
+	// it was created.
+	preCommits := transition.UnspentPreCommits
+	if len(preCommits) == 0 {
+		tracked, err := env.Commitments.UnspentPrecommits(
+			ctx, env.AssetSpec, true,
+		).Unpack()
+		if err != nil {
+			return fmt.Errorf("unable to fetch unspent "+
+				"pre-commitments: %w", err)
+		}
+		preCommits = tracked
+	}
+
 	type triggerSource struct {
 		pkScript   []byte
 		heightHint uint32
@@ -365,8 +381,8 @@ func registerCommitAnchoring(ctx context.Context, env *Environment,
 			heightHint: max(height, 1),
 		}
 	})
-	for idx := range transition.UnspentPreCommits {
-		preCommit := transition.UnspentPreCommits[idx]
+	for idx := range preCommits {
+		preCommit := preCommits[idx]
 		if preCommit.MintingTxn == nil ||
 			int(preCommit.OutIdx) >= len(
 				preCommit.MintingTxn.TxOut,
