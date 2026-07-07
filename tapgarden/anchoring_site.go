@@ -303,6 +303,22 @@ func (c *ChainPlanter) DispatchMintPublish(ctx context.Context,
 	if err != nil {
 		return fmt.Errorf("unable to fetch batch: %w", err)
 	}
+
+	// A finalized batch stores its assets in the proof archive rather
+	// than the sprout tables — the dispatch may run after the
+	// cultivator has already finalized the batch, so rebuild the
+	// commitment from the archived issuance proofs in that case.
+	if batch.RootAssetCommitment == nil &&
+		batch.State() == BatchStateFinalized {
+
+		batch, err = fetchFinalizedBatch(
+			ctx, c.cfg.MintingRefs, c.cfg.ProofFiles, batch,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch finalized "+
+				"batch: %w", err)
+		}
+	}
 	if batch.RootAssetCommitment == nil {
 		return fmt.Errorf("batch %x has no commitment",
 			blob.RawBatchKey)
@@ -357,6 +373,22 @@ func (c *ChainPlanter) DispatchMintPublish(ctx context.Context,
 		return fmt.Errorf("could not sort assets: %w", err)
 	}
 
+	// The augmenter's obligations run before the universe
+	// publication: the publication is the externally observable
+	// emission, so its visibility certifies that every act-gated
+	// consequence of this batch — the supply-commit events included —
+	// has already landed.
+	augmenter := c.cfg.GenesisTxAugmenter
+	if augmenter == nil {
+		augmenter = NoOpAugmenter{}
+	}
+	err = augmenter.OnBatchConfirmed(
+		ctx, batch, anchorAssets, nonAnchorAssets, mintingProofs,
+	)
+	if err != nil {
+		return fmt.Errorf("augmenter OnBatchConfirmed: %w", err)
+	}
+
 	if c.cfg.MintProofPublisher != nil {
 		publishAssets := make(
 			[]*asset.Asset, 0,
@@ -378,17 +410,6 @@ func (c *ChainPlanter) DispatchMintPublish(ctx context.Context,
 			return fmt.Errorf("unable to publish minted "+
 				"batch: %w", err)
 		}
-	}
-
-	augmenter := c.cfg.GenesisTxAugmenter
-	if augmenter == nil {
-		augmenter = NoOpAugmenter{}
-	}
-	err = augmenter.OnBatchConfirmed(
-		ctx, batch, anchorAssets, nonAnchorAssets, mintingProofs,
-	)
-	if err != nil {
-		return fmt.Errorf("augmenter OnBatchConfirmed: %w", err)
 	}
 
 	return nil
