@@ -72,7 +72,7 @@ func (m *MockRegistrar) Register(_ context.Context, spec RegistrationSpec,
 
 	m.nextID++
 	id := m.nextID
-	m.anchorings[id] = &Anchoring{
+	anchoring := &Anchoring{
 		ID:             id,
 		Site:           spec.Site,
 		Triggers:       spec.Triggers,
@@ -82,6 +82,12 @@ func (m *MockRegistrar) Register(_ context.Context, spec RegistrationSpec,
 		Phase:          Unwitnessed{},
 		DeliveredPhase: Unwitnessed{},
 	}
+	if spec.SeedCandidate != nil {
+		anchoring.Spends = []CandidateSpend{*spec.SeedCandidate}
+		anchoring.Phase = Witnessed{W: spec.SeedCandidate.W}
+		anchoring.DeliveredPhase = Witnessed{W: spec.SeedCandidate.W}
+	}
+	m.anchorings[id] = anchoring
 
 	return id, nil
 }

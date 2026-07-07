@@ -283,6 +283,17 @@ type RegistrationSpec struct {
 	// Threshold is the confirmation depth at which this site
 	// considers an outcome final (act-confirmed).
 	Threshold uint32
+
+	// SeedCandidate, when set, is a fully-enriched candidate spend
+	// the caller already knows about (e.g. a received proof file's
+	// tip anchor tx). The registry inserts it at registration and
+	// the sensor immediately subscribes to its conf events for
+	// act-certification and re-org detection — no spend-side
+	// discovery is required. Registrations that set SeedCandidate
+	// may pass an empty trigger set: the seed IS the witnessing
+	// transaction, and there is no prior outpoint for any foreign
+	// spender to foreclose against.
+	SeedCandidate *CandidateSpend
 }
 
 // Validate checks the spec's value-level invariants.
@@ -290,12 +301,25 @@ func (s *RegistrationSpec) Validate() error {
 	if s.Site == "" {
 		return errors.New("registration requires a site ID")
 	}
-	if s.Triggers.Len() == 0 {
+	if s.Triggers.Len() == 0 && s.SeedCandidate == nil {
 		return ErrEmptyTriggerSet
 	}
 	if s.Threshold == 0 {
 		return errors.New("registration requires a threshold " +
 			"of at least one confirmation")
+	}
+	if s.SeedCandidate != nil {
+		if !s.SeedCandidate.OnChain {
+			return errors.New("seed candidate must be on-chain")
+		}
+		if s.SeedCandidate.BlockHeader == nil {
+			return errors.New("seed candidate must carry its " +
+				"block header")
+		}
+		if s.SeedCandidate.MerkleProof == nil {
+			return errors.New("seed candidate must carry its " +
+				"merkle proof")
+		}
 	}
 
 	return nil

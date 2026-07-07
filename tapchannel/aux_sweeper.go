@@ -3,7 +3,6 @@ package tapchannel
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -22,7 +21,6 @@ import (
 	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightninglabs/taproot-assets/tapchannelmsg"
 	cmsg "github.com/lightninglabs/taproot-assets/tapchannelmsg"
-	"github.com/lightninglabs/taproot-assets/tapcustody"
 	"github.com/lightninglabs/taproot-assets/tapfreighter"
 	"github.com/lightninglabs/taproot-assets/tapnode"
 	"github.com/lightninglabs/taproot-assets/tappsbt"
@@ -148,7 +146,6 @@ type AuxSweeperCfg struct {
 	// fresh anchoring for the winning transaction, while the stale
 	// form's anchoring abandons and compensates its rows.
 	AnchoringRegistrar ReceiveAnchoringRegistrar
-
 }
 
 // AuxSweeper is used to sweep funds from a commitment transaction that has
@@ -1686,19 +1683,14 @@ func (a *AuxSweeper) materializeAssetOutputs(ctx context.Context,
 		}
 
 		// Hand the imported state to the re-org watcher as a
-		// speculative anchoring. A file with no derivable trigger
-		// set cannot be staked; the condition is surfaced rather
-		// than silently dropped.
+		// speculative anchoring. Files with derivable asset-
+		// bearing triggers register the ordinary way; single-proof
+		// genesis-shaped files (rare for sweep imports) seed the
+		// anchor tx directly inside the receive site.
 		err = a.cfg.AnchoringRegistrar.RegisterReceiveAnchoring(
 			ctx, &proofFile,
 		)
-		switch {
-		case errors.Is(err, tapcustody.ErrNoTriggers):
-			log.Warnf("Swept proof file has no derivable "+
-				"trigger outpoints, not watching it for "+
-				"re-orgs (outpoint=%v)", outProof.OutPoint())
-
-		case err != nil:
+		if err != nil {
 			return fmt.Errorf("unable to register sweep "+
 				"anchoring: %w", err)
 		}
@@ -1711,8 +1703,10 @@ func (a *AuxSweeper) materializeAssetOutputs(ctx context.Context,
 // speculative anchoring with the re-org watcher.
 type ReceiveAnchoringRegistrar interface {
 	// RegisterReceiveAnchoring stakes the file's imported state on
-	// its tip anchor transaction; it returns
-	// tapcustody.ErrNoTriggers when no trigger set is derivable.
+	// its tip anchor transaction. Files with derivable asset-bearing
+	// triggers register the ordinary way; single-proof genesis-
+	// shaped files seed the anchor tx directly as the anchoring's
+	// candidate spend.
 	RegisterReceiveAnchoring(ctx context.Context,
 		file *proof.File) error
 }

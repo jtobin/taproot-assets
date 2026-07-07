@@ -2,6 +2,7 @@ package tapcustody
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -246,8 +247,11 @@ func (c *Custodian) AnchoringSite() tapreorg.Site {
 // share the anchoring.
 //
 // Files whose trigger set cannot be derived (a single-proof genesis
-// file has no asset-bearing inputs) return ErrNoTriggers; callers
-// surface the condition rather than silently dropping it.
+// file has no asset-bearing inputs) seed the anchor tx directly as
+// the anchoring's candidate spend instead of watching for a
+// witnessing spender — the tx is already witnessed by its own
+// confirmation, and the watcher's conf subscription on it certifies
+// act crossing and detects re-org-out.
 func (c *Custodian) RegisterReceiveAnchoring(ctx context.Context,
 	file *proof.File) error {
 
@@ -281,24 +285,58 @@ func (c *Custodian) RegisterReceiveAnchoring(ctx context.Context,
 		}
 	}
 
-	points, err := receiveTriggerPoints(file, tip)
-	if err != nil {
-		return err
-	}
-	triggers, err := tapreorg.NewTriggerSet(points)
-	if err != nil {
-		return fmt.Errorf("unable to build trigger set: %w", err)
+	// A file with derivable asset-bearing triggers registers the
+	// ordinary way: spend subscriptions on the trigger set observe
+	// the anchor tx confirming (as the witnessing spender) and any
+	// foreign spender as a foreclosure. A file without them (a
+	// single-proof genesis receive) has no prior outpoint to watch,
+	// so it seeds its already-known anchor tx as the anchoring's
+	// candidate spend: the watcher's conf subscription on that tx
+	// certifies act crossing and detects re-org-out directly.
+	blob := encodeReceiveBlob(anchorTxid)
+	spec := tapreorg.RegistrationSpec{
+		Site:      ReceiveSiteID,
+		MatchData: blob,
+		Payload:   blob,
+		Threshold: c.cfg.AnchoringThreshold,
 	}
 
-	blob := encodeReceiveBlob(anchorTxid)
+	points, err := receiveTriggerPoints(file, tip)
+	switch {
+	case errors.Is(err, ErrNoTriggers):
+		// The seed path needs a confirmed anchor tx: its block
+		// context is what the watcher's conf subscription
+		// certifies against. A tip without block context
+		// (a stub, or a proof imported before confirmation) is
+		// not stakeable here; surface the condition.
+		if tip.BlockHeight == 0 {
+			log.Warnf("Received genesis-shape proof file has "+
+				"no block context yet, not watching it for "+
+				"re-orgs (anchor_txid=%v)", anchorTxid)
+			return nil
+		}
+
+		seed, seedErr := genesisSeedCandidate(tip)
+		if seedErr != nil {
+			return fmt.Errorf("unable to build genesis seed: "+
+				"%w", seedErr)
+		}
+		spec.SeedCandidate = &seed
+
+	case err != nil:
+		return err
+
+	default:
+		triggers, err := tapreorg.NewTriggerSet(points)
+		if err != nil {
+			return fmt.Errorf("unable to build trigger set: %w",
+				err)
+		}
+		spec.Triggers = triggers
+	}
+
 	_, err = c.cfg.AnchoringWatcher.Register(
-		ctx, tapreorg.RegistrationSpec{
-			Site:      ReceiveSiteID,
-			Triggers:  triggers,
-			MatchData: blob,
-			Payload:   blob,
-			Threshold: c.cfg.AnchoringThreshold,
-		},
+		ctx, spec,
 		// The receiver's speculative writes (the proof import
 		// and event completion) happen through the archive
 		// pipeline before registration; the custodian's own
@@ -314,11 +352,46 @@ func (c *Custodian) RegisterReceiveAnchoring(ctx context.Context,
 	return nil
 }
 
+// genesisSeedCandidate builds a fully-enriched candidate spend from a
+// genesis-shaped proof file's tip. All the required data lives in the
+// proof: the anchor tx, its confirmation block header + height, and
+// its merkle proof (which also encodes the tx's index within the
+// block). The candidate is on-chain; act certification and re-org
+// sensing follow through the watcher's conf subscription on the
+// anchor tx.
+func genesisSeedCandidate(
+	tip *proof.Proof) (tapreorg.CandidateSpend, error) {
+
+	blockHash := tip.BlockHeader.BlockHash()
+	txIndex := tip.TxMerkleProof.TxIndex()
+
+	witness, err := tapreorg.NewWitness(
+		&tip.AnchorTx, blockHash, tip.BlockHeight, txIndex,
+	)
+	if err != nil {
+		return tapreorg.CandidateSpend{}, fmt.Errorf("unable to "+
+			"build witness: %w", err)
+	}
+
+	header := tip.BlockHeader
+	merkle := tip.TxMerkleProof
+
+	return tapreorg.CandidateSpend{
+		W:            witness,
+		Verdict:      tapreorg.VerdictSatisfies,
+		OnChain:      true,
+		BlockHeader:  &header,
+		MerkleProof:  &merkle,
+		ActCertified: false,
+	}, nil
+}
+
 // ErrNoTriggers marks a proof file from which no asset-bearing
 // trigger set can be derived (a single-proof genesis file has no
-// asset-bearing inputs). Callers surface the condition rather than
-// silently dropping it; a genesis-shaped trigger strategy is a
-// pending follow-up.
+// asset-bearing inputs). It is an internal signal from
+// receiveTriggerPoints to RegisterReceiveAnchoring, which handles it
+// by seeding the anchor tx as the anchoring's candidate spend rather
+// than watching for a witnessing spender.
 var ErrNoTriggers = fmt.Errorf("no derivable trigger outpoints")
 
 // receiveTriggerPoints derives the anchoring's trigger set from a

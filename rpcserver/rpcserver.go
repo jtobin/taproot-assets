@@ -12058,17 +12058,13 @@ func (r *RPCServer) RegisterTransfer(ctx context.Context,
 		return nil, fmt.Errorf("error importing proof: %w", err)
 	}
 
-	// In case this proof hasn't been buried sufficiently, register it
-	// with the re-org watcher as a speculative anchoring. A file with
-	// no derivable trigger set cannot be staked; the condition is
-	// surfaced rather than silently dropped.
+	// In case this proof hasn't been buried sufficiently, register
+	// it with the re-org watcher as a speculative anchoring. Files
+	// with derivable asset-bearing triggers register the ordinary
+	// way; single-proof genesis-shaped files seed the anchor tx
+	// directly inside the receive site.
 	err = r.cfg.AssetCustodian.RegisterReceiveAnchoring(ctx, proofFile)
-	switch {
-	case errors.Is(err, tapcustody.ErrNoTriggers):
-		rpcsLog.Warnf("Registered proof file has no derivable " +
-			"trigger outpoints, not watching it for re-orgs")
-
-	case err != nil:
+	if err != nil {
 		return nil, fmt.Errorf("error registering receive "+
 			"anchoring: %w", err)
 	}

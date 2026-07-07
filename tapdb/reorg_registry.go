@@ -171,6 +171,20 @@ func (s *ReorgRegistryStore) Register(ctx context.Context,
 			}
 		}
 
+		// A seeded candidate is inserted before phase1 runs so
+		// the site's phase-1 write can observe the seed if it
+		// needs to (though most sites do not).
+		if spec.SeedCandidate != nil {
+			err := insertCandidateSpend(
+				ctx, q, tapreorg.AnchoringID(id),
+				*spec.SeedCandidate,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to seed "+
+					"candidate: %w", err)
+			}
+		}
+
 		if phase1 != nil {
 			handle := &registryTx{q: q, clock: s.clock}
 			newID := tapreorg.AnchoringID(id)
@@ -297,6 +311,18 @@ func (s *ReorgRegistryStore) ChainView(ctx context.Context,
 func (s *ReorgRegistryStore) UpsertCandidate(ctx context.Context,
 	id tapreorg.AnchoringID, candidate tapreorg.CandidateSpend) error {
 
+	return s.db.ExecTx(ctx, WriteTxOption(), func(q *sqlc.Queries) error {
+		return insertCandidateSpend(ctx, q, id, candidate)
+	})
+}
+
+// insertCandidateSpend writes a candidate spend row inside whatever
+// transaction the caller owns. Shared by UpsertCandidate (own
+// transaction) and Register (registration transaction, for a
+// SeedCandidate).
+func insertCandidateSpend(ctx context.Context, q *sqlc.Queries,
+	id tapreorg.AnchoringID, candidate tapreorg.CandidateSpend) error {
+
 	var rawTx bytes.Buffer
 	if err := candidate.W.Tx().Serialize(&rawTx); err != nil {
 		return fmt.Errorf("unable to serialize candidate tx: %w", err)
@@ -325,37 +351,35 @@ func (s *ReorgRegistryStore) UpsertCandidate(ctx context.Context,
 		merkleBytes = buf.Bytes()
 	}
 
-	return s.db.ExecTx(ctx, WriteTxOption(), func(q *sqlc.Queries) error {
-		return q.UpsertReorgCandidateSpend(
-			ctx, sqlc.UpsertReorgCandidateSpendParams{
-				AnchoringID: int64(id),
-				SpenderTxid: spenderTxid.CloneBytes(),
-				RawTx:       rawTx.Bytes(),
-				Verdict: sql.NullInt16{
-					Int16: int16(candidate.Verdict),
-					Valid: true,
-				},
-				OnChain:   candidate.OnChain,
-				BlockHash: blockHash.CloneBytes(),
-				BlockHeight: sql.NullInt32{
-					Int32: int32(candidate.W.Height()),
-					Valid: true,
-				},
-				TxIndex: sql.NullInt32{
-					Int32: int32(candidate.W.TxIndex()),
-					Valid: true,
-				},
-				ActCertified: candidate.ActCertified,
-				BlockHeader:  headerBytes,
-				MerkleProof:  merkleBytes,
-				SpentOutpoints: orEmpty(
-					tapreorg.EncodeOutPoints(
-						candidate.SpentOutPoints,
-					),
-				),
+	return q.UpsertReorgCandidateSpend(
+		ctx, sqlc.UpsertReorgCandidateSpendParams{
+			AnchoringID: int64(id),
+			SpenderTxid: spenderTxid.CloneBytes(),
+			RawTx:       rawTx.Bytes(),
+			Verdict: sql.NullInt16{
+				Int16: int16(candidate.Verdict),
+				Valid: true,
 			},
-		)
-	})
+			OnChain:   candidate.OnChain,
+			BlockHash: blockHash.CloneBytes(),
+			BlockHeight: sql.NullInt32{
+				Int32: int32(candidate.W.Height()),
+				Valid: true,
+			},
+			TxIndex: sql.NullInt32{
+				Int32: int32(candidate.W.TxIndex()),
+				Valid: true,
+			},
+			ActCertified: candidate.ActCertified,
+			BlockHeader:  headerBytes,
+			MerkleProof:  merkleBytes,
+			SpentOutpoints: orEmpty(
+				tapreorg.EncodeOutPoints(
+					candidate.SpentOutPoints,
+				),
+			),
+		},
+	)
 }
 
 // SetPhase persists a newly derived phase.

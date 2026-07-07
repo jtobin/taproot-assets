@@ -11,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/taproot-assets/fn"
+	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightninglabs/taproot-assets/tapdb/sqlc"
 	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightningnetwork/lnd/clock"
@@ -635,4 +636,114 @@ func TestReorgRegistryRapid(t *testing.T) {
 			require.Equal(rt, want, got)
 		}
 	})
+}
+
+// TestReorgRegistrySeedCandidate exercises the seeded-registration
+// path: a spec that provides a SeedCandidate stores it in the
+// registration transaction, the anchoring's chain view reflects the
+// seed, and phase derivation immediately observes Witnessed. This is
+// the shape a genesis-shaped receive uses to stake on a proof file's
+// tip anchor tx, which is already known confirmed at registration.
+func TestReorgRegistrySeedCandidate(t *testing.T) {
+	t.Parallel()
+
+	store, _ := newReorgStore(t)
+	ctx := context.Background()
+
+	// Build the seed's witness and block context. The tx's input
+	// is a wallet UTXO from the caller's world; the seeded-
+	// registration path does not watch it — the tx IS the
+	// witnessing spender, and the anchoring's chain view records
+	// the tx directly without a trigger set.
+	fundingOp := testOutPoint(0x11, 0)
+	tx := wire.NewMsgTx(2)
+	tx.AddTxIn(wire.NewTxIn(&fundingOp, nil, nil))
+	tx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xaa}))
+	var blockHash chainhash.Hash
+	blockHash[0] = 0xaa
+	witness, err := tapreorg.NewWitness(tx, blockHash, 600, 1)
+	require.NoError(t, err)
+
+	header := &wire.BlockHeader{Timestamp: time.Unix(1, 0)}
+	merkle := &proof.TxMerkleProof{
+		Bits:  []bool{false},
+		Nodes: []chainhash.Hash{},
+	}
+
+	spec := tapreorg.RegistrationSpec{
+		Site:      "receiver",
+		Triggers:  tapreorg.TriggerSet{},
+		MatchData: tapreorg.VersionedBlob{Version: 1},
+		Payload:   tapreorg.VersionedBlob{Version: 1},
+		Threshold: 6,
+		SeedCandidate: &tapreorg.CandidateSpend{
+			W:           witness,
+			Verdict:     tapreorg.VerdictSatisfies,
+			OnChain:     true,
+			BlockHeader: header,
+			MerkleProof: merkle,
+		},
+	}
+
+	id, err := store.Register(ctx, spec, 500, nil)
+	require.NoError(t, err)
+
+	// The seed is durable in the registration transaction.
+	view, err := store.ChainView(ctx, id)
+	require.NoError(t, err)
+	require.Len(t, view.Spends, 1)
+	require.Equal(t, witness.TxHash(), view.Spends[0].W.TxHash())
+	require.True(t, view.Spends[0].OnChain)
+	require.NotNil(t, view.Spends[0].BlockHeader)
+	require.NotNil(t, view.Spends[0].MerkleProof)
+
+	// Phase derivation immediately reports Witnessed.
+	phase := tapreorg.DerivePhase(view)
+	require.IsType(t, tapreorg.Witnessed{}, phase)
+}
+
+// TestReorgRegistrySeedCandidateValidation asserts the value-level
+// checks on a seeded spec: on-chain, with a block header and merkle
+// proof.
+func TestReorgRegistrySeedCandidateValidation(t *testing.T) {
+	t.Parallel()
+
+	tx := wire.NewMsgTx(2)
+	tx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xbb}))
+	var blockHash chainhash.Hash
+	blockHash[0] = 0xbb
+	witness, err := tapreorg.NewWitness(tx, blockHash, 700, 0)
+	require.NoError(t, err)
+
+	base := tapreorg.RegistrationSpec{
+		Site:      "receiver",
+		MatchData: tapreorg.VersionedBlob{Version: 1},
+		Payload:   tapreorg.VersionedBlob{Version: 1},
+		Threshold: 6,
+	}
+
+	// Empty triggers with no seed → ErrEmptyTriggerSet.
+	err = base.Validate()
+	require.ErrorIs(t, err, tapreorg.ErrEmptyTriggerSet)
+
+	// Seed not on-chain.
+	spec := base
+	spec.SeedCandidate = &tapreorg.CandidateSpend{
+		W:       witness,
+		Verdict: tapreorg.VerdictSatisfies,
+		OnChain: false,
+	}
+	require.ErrorContains(t, spec.Validate(), "on-chain")
+
+	// Seed on-chain but missing block header.
+	spec.SeedCandidate.OnChain = true
+	require.ErrorContains(t, spec.Validate(), "block header")
+
+	// Header set, merkle proof missing.
+	spec.SeedCandidate.BlockHeader = &wire.BlockHeader{}
+	require.ErrorContains(t, spec.Validate(), "merkle proof")
+
+	// Full valid seed.
+	spec.SeedCandidate.MerkleProof = &proof.TxMerkleProof{}
+	require.NoError(t, spec.Validate())
 }
