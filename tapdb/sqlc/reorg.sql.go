@@ -857,6 +857,15 @@ type UpsertReorgCandidateSpendParams struct {
 
 // Certification is sticky: once set it survives every later update,
 // since a certified act crossing is never retracted by re-orgs.
+//
+// The on_chain flag is overwritten from EXCLUDED. This is safe even
+// when an act certification arrives while the candidate is briefly
+// off-chain in a re-org window (rare but possible): DerivePhase
+// consults act_certified before touching on_chain for act-tier
+// phases, so the sticky certification dominates the phase output and
+// the on-chain flag only becomes meaningful again once the
+// transaction is back on the dominant chain (at which point the next
+// location-conf upsert will set it true).
 func (q *Queries) UpsertReorgCandidateSpend(ctx context.Context, arg UpsertReorgCandidateSpendParams) error {
 	_, err := q.db.ExecContext(ctx, UpsertReorgCandidateSpend,
 		arg.AnchoringID,

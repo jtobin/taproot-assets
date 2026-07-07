@@ -62,6 +62,15 @@ ORDER BY id;
 -- name: UpsertReorgCandidateSpend :exec
 -- Certification is sticky: once set it survives every later update,
 -- since a certified act crossing is never retracted by re-orgs.
+--
+-- The on_chain flag is overwritten from EXCLUDED. This is safe even
+-- when an act certification arrives while the candidate is briefly
+-- off-chain in a re-org window (rare but possible): DerivePhase
+-- consults act_certified before touching on_chain for act-tier
+-- phases, so the sticky certification dominates the phase output and
+-- the on-chain flag only becomes meaningful again once the
+-- transaction is back on the dominant chain (at which point the next
+-- location-conf upsert will set it true).
 INSERT INTO reorg_candidate_spends (
     anchoring_id, spender_txid, raw_tx, verdict, on_chain, block_hash,
     block_height, tx_index, act_certified, block_header, merkle_proof,
