@@ -680,3 +680,56 @@ const anchoringPollInterval = 30 * time.Second
 
 // errShutdown is returned when a wait is interrupted by shutdown.
 var errShutdown = fmt.Errorf("chain porter shutting down")
+
+// enrichSendManifests fills each address-v2 send fragment manifest
+// with the transfer's confirmed anchor context, taken from the
+// anchoring's enriched witness. The auth mailbox courier cannot
+// deliver a fragment without a transaction proof for its claimed
+// outpoint, so on the anchoring path this replaces the enrichment the
+// legacy confirmation path performs from its re-stamped proof
+// suffixes.
+func enrichSendManifests(pkg *sendPackage,
+	witness *tapreorg.CandidateSpend) error {
+
+	if len(pkg.SendManifests) == 0 {
+		return nil
+	}
+	if witness == nil || witness.BlockHeader == nil ||
+		witness.MerkleProof == nil {
+
+		return fmt.Errorf("send manifests require an enriched " +
+			"confirmation witness")
+	}
+
+	for i := range pkg.OutboundPkg.Outputs {
+		out := pkg.OutboundPkg.Outputs[i]
+		manifest, ok := pkg.SendManifests[out.Anchor.OutPoint.Index]
+		if !ok {
+			continue
+		}
+
+		if out.Anchor.InternalKey.PubKey == nil {
+			return fmt.Errorf("anchor internal key not set for "+
+				"output %d", out.Anchor.OutPoint.Index)
+		}
+
+		copy(
+			manifest.Fragment.TaprootAssetRoot[:],
+			out.Anchor.TaprootAssetRoot,
+		)
+		manifest.Fragment.OutPoint = out.Anchor.OutPoint
+		manifest.Fragment.BlockHeader = *witness.BlockHeader
+		manifest.Fragment.BlockHeight = witness.W.Height()
+		manifest.TxProof = proof.TxProof{
+			MsgTx:           *witness.W.Tx(),
+			BlockHeader:     *witness.BlockHeader,
+			BlockHeight:     witness.W.Height(),
+			MerkleProof:     *witness.MerkleProof,
+			ClaimedOutPoint: out.Anchor.OutPoint,
+			InternalKey:     *out.Anchor.InternalKey.PubKey,
+			MerkleRoot:      out.Anchor.MerkleRoot,
+		}
+	}
+
+	return nil
+}

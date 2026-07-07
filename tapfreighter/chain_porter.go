@@ -2298,7 +2298,15 @@ func (p *ChainPorter) stateStep(currentPkg sendPackage) (*sendPackage, error) {
 			ctx, cancel := p.CtxBlocking()
 			defer cancel()
 
-			err := p.importConfirmedProofFiles(
+			err := enrichSendManifests(
+				&currentPkg, currentPkg.ConfWitness,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("unable to enrich "+
+					"send manifests: %w", err)
+			}
+
+			err = p.importConfirmedProofFiles(
 				ctx, &currentPkg, currentPkg.ConfWitness,
 			)
 			if err != nil {
