@@ -166,10 +166,47 @@ func (u *UpdatesPendingState) ProcessEvent(event Event, env *Environment) (
 	// the new set of supply commitments. We'll emit the CreateTxEvent to
 	// the next state will begin the process of making the new commitment.
 	case *CommitTickEvent:
+		ctx := context.Background()
+
+		// A machine resumed from disk rests here with no in-memory
+		// updates; the durable record is authoritative, so re-derive
+		// the batch from it before committing.
+		updatesToCommit := u.pendingUpdates
+		if len(updatesToCommit) == 0 {
+			_, diskTransition, err := env.StateLog.FetchState(
+				ctx, env.AssetSpec,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("unable to fetch "+
+					"durable state: %w", err)
+			}
+			diskTransition.WhenSome(
+				func(t SupplyStateTransition) {
+					updatesToCommit = t.PendingUpdates
+				},
+			)
+		}
+
+		// With still nothing to commit, ticking is vacuous: return
+		// to the default state rather than committing an empty
+		// batch.
+		if len(updatesToCommit) == 0 {
+			err := env.StateLog.CommitState(
+				ctx, env.AssetSpec, &DefaultState{},
+			)
+			if err != nil {
+				return nil, fmt.Errorf("unable to commit "+
+					"state transition: %w", err)
+			}
+
+			return &StateTransition{
+				NextState: &DefaultState{},
+			}, nil
+		}
+
 		// Before we transition, we'll freeze the current pending
 		// transition. This ensures that no new updates can be added
 		// to this batch.
-		ctx := context.Background()
 		err := env.StateLog.FreezePendingTransition(ctx, env.AssetSpec)
 		if err != nil {
 			return nil, fmt.Errorf("unable to freeze "+
@@ -177,13 +214,13 @@ func (u *UpdatesPendingState) ProcessEvent(event Event, env *Environment) (
 		}
 
 		prefixedLog.Infof("Received tick event, committing %d "+
-			"supply updates", len(u.pendingUpdates))
+			"supply updates", len(updatesToCommit))
 
 		return &StateTransition{
 			NextState: &CommitTreeCreateState{},
 			NewEvents: lfn.Some(FsmEvent{
 				InternalEvent: []Event{&CreateTreeEvent{
-					updatesToCommit: u.pendingUpdates,
+					updatesToCommit: updatesToCommit,
 				}},
 			}),
 		}, nil
@@ -921,6 +958,72 @@ func (c *CommitBroadcastState) ProcessEvent(event Event,
 		return &StateTransition{
 			NextState: c,
 		}, nil
+
+	// On the anchoring path the re-org watcher finalizes the
+	// transition out-of-band, in its delivery transaction; a tick is
+	// the hint (the push dispatcher's nudge, or any later caller) to
+	// re-derive our position from the durable record. If the record
+	// has moved on, adopt it; otherwise keep resting.
+	case *CommitTickEvent:
+		if env.AnchoringWatcher == nil {
+			return nil, fmt.Errorf("%w: received %T while in %T",
+				ErrInvalidStateTransition, newEvent, c)
+		}
+
+		ctx := context.Background()
+		diskState, diskTransition, err := env.StateLog.FetchState(
+			ctx, env.AssetSpec,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("unable to fetch durable "+
+				"state: %w", err)
+		}
+
+		switch diskState.(type) {
+		// Not yet finalized: keep resting.
+		case *CommitBroadcastState:
+			return &StateTransition{NextState: c}, nil
+
+		// Finalized, nothing dangling: come to rest.
+		case *DefaultState:
+			prefixedLog.Infof("Commitment finalized by the " +
+				"watcher, returning to the default state")
+
+			return &StateTransition{
+				NextState: &DefaultState{},
+			}, nil
+
+		// Finalized, with a fresh batch of updates bound by the
+		// finalizer: adopt it and re-tick so the next commitment
+		// cycle begins.
+		case *UpdatesPendingState:
+			var updates []SupplyUpdateEvent
+			diskTransition.WhenSome(
+				func(t SupplyStateTransition) {
+					updates = t.PendingUpdates
+				},
+			)
+
+			prefixedLog.Infof("Commitment finalized by the "+
+				"watcher with %d dangling updates bound, "+
+				"starting the next cycle", len(updates))
+
+			return &StateTransition{
+				NextState: &UpdatesPendingState{
+					pendingUpdates: updates,
+				},
+				NewEvents: lfn.Some(FsmEvent{
+					InternalEvent: []Event{
+						&CommitTickEvent{},
+					},
+				}),
+			}, nil
+
+		// Anything else is the machine's own in-flight progress;
+		// leave it alone and rest.
+		default:
+			return &StateTransition{NextState: c}, nil
+		}
 
 	// We're at the final step of the state machine. We'll broadcast the
 	// signed commit tx, then register for a confirmation for when it

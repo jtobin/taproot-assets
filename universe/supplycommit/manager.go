@@ -15,7 +15,6 @@ import (
 	"github.com/lightninglabs/taproot-assets/fn"
 	"github.com/lightninglabs/taproot-assets/mssmt"
 	"github.com/lightninglabs/taproot-assets/tapnode"
-	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightninglabs/taproot-assets/universe"
 	"github.com/lightningnetwork/lnd/msgmux"
 	"github.com/lightningnetwork/lnd/protofsm"
@@ -45,7 +44,7 @@ type ManagerCfg struct {
 	// AnchoringWatcher is the re-org watcher broadcast commitments
 	// register with as speculative anchorings; finalization is then
 	// act-gated on burial.
-	AnchoringWatcher *tapreorg.Watcher
+	AnchoringWatcher AnchoringRegistrar
 
 	// AnchoringThreshold is the depth at which a commitment is
 	// act-confirmed (buried).

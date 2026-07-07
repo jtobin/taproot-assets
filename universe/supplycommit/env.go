@@ -20,7 +20,6 @@ import (
 	"github.com/lightninglabs/taproot-assets/mssmt"
 	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightninglabs/taproot-assets/tapnode"
-	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightninglabs/taproot-assets/tapsend"
 	"github.com/lightninglabs/taproot-assets/universe"
 	lfn "github.com/lightningnetwork/lnd/fn/v2"
@@ -919,7 +918,7 @@ type Environment struct {
 	// machine defers finalization until the watcher reports the
 	// commit transaction buried, instead of finalizing at a single
 	// confirmation.
-	AnchoringWatcher *tapreorg.Watcher
+	AnchoringWatcher AnchoringRegistrar
 
 	// AnchoringThreshold is the depth at which the commitment is
 	// act-confirmed (buried).

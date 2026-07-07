@@ -106,8 +106,9 @@ func (u *unknownEvent) eventSealed() {}
 
 // harnessCfg holds configuration for the test harness.
 type harnessCfg struct {
-	initialState State
-	assetSpec    asset.Specifier
+	initialState     State
+	assetSpec        asset.Specifier
+	anchoringWatcher AnchoringRegistrar
 }
 
 // supplyCommitTestHarness is a test harness for the supply commit state
@@ -162,6 +163,7 @@ func newSupplyCommitTestHarness(t *testing.T,
 		SupplySyncer:       mSupplySyncer,
 		CommitConfTarget:   DefaultCommitConfTarget,
 		IgnoreCheckerCache: mCache,
+		AnchoringWatcher:   cfg.anchoringWatcher,
 	}
 
 	fsmCfg := Config{

@@ -72,6 +72,21 @@ func decodeSupplyBlob(blob tapreorg.VersionedBlob) (supplyBlob, error) {
 	return out, nil
 }
 
+// AnchoringRegistrar is the surface of the re-org watcher the supply
+// machinery uses to stake a broadcast commitment as a speculative
+// anchoring. Implemented by *tapreorg.Watcher.
+type AnchoringRegistrar interface {
+	// Register stakes a new anchoring.
+	Register(ctx context.Context, spec tapreorg.RegistrationSpec,
+		phase1 func(context.Context, tapreorg.RegistryTx,
+			tapreorg.AnchoringID) error) (tapreorg.AnchoringID,
+		error)
+
+	// Anchorings lists the site's live anchorings.
+	Anchorings(ctx context.Context,
+		site tapreorg.SiteID) ([]*tapreorg.Anchoring, error)
+}
+
 // SupplyAnchoringLog is the supply site's persistence surface,
 // implemented by the tapdb supply-commit store. The q-scoped methods
 // run inside the re-org watcher's delivery transaction; the fetch
