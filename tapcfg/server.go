@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
+	"time"
 
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btclog/v2"
@@ -433,12 +434,23 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 	anchoringRegistry := tapdb.NewReorgRegistryStore(
 		reorgRegistryDB, defaultClock,
 	)
-	anchoringWatcher := tapreorg.NewWatcher(&tapreorg.WatcherConfig{
+	watcherCfg := &tapreorg.WatcherConfig{
 		Notifier: chainBridge,
 		Registry: anchoringRegistry,
 		Clock:    defaultClock,
 		ErrChan:  mainErrChan,
-	})
+	}
+
+	// Regtest and simnet blocks arrive on demand and consumers wait
+	// on short windows, so retry and scan quickly there; the
+	// defaults are tuned to public-network block cadence.
+	switch cfg.ChainConf.Network {
+	case "regtest", "simnet":
+		watcherCfg.InitialDeliveryBackoff = time.Second
+		watcherCfg.MaxDeliveryBackoff = 10 * time.Second
+		watcherCfg.ScanInterval = time.Second
+	}
+	anchoringWatcher := tapreorg.NewWatcher(watcherCfg)
 
 	uniArchive := universe.NewArchive(uniArchiveCfg)
 

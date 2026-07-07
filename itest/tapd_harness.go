@@ -168,6 +168,14 @@ type harnessOpts struct {
 	// universe syncer cache.
 	disableSyncCache bool
 
+	// reOrgSafeDepth is the burial depth the node considers a
+	// transaction safely buried at. Itests default to 1 so act-gated
+	// behavior (universe publish, supply commits) fires at the first
+	// confirmation, matching the block counts the tests mine; the
+	// re-org tests override it so burial certification stays deeper
+	// than the re-orgs they generate.
+	reOrgSafeDepth int32
+
 	// sendPriceHint indicates whether the tapd should send price hints from
 	// the local oracle to the counterparty when requesting a quote.
 	sendPriceHint bool
@@ -277,6 +285,14 @@ func newTapdHarness(t *testing.T, ht *harnessTest, cfg tapdConfig,
 		"--logging.file.max-files=99",
 		"--logging.file.max-file-size=999",
 	}
+
+	reOrgSafeDepth := int32(1)
+	if opts.reOrgSafeDepth > 0 {
+		reOrgSafeDepth = opts.reOrgSafeDepth
+	}
+	args = append(args, fmt.Sprintf(
+		"--reorgsafedepth=%d", reOrgSafeDepth,
+	))
 
 	// Resolve the proof courier address.
 	proofCourierAddr := ""

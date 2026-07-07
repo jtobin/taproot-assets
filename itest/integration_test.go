@@ -122,6 +122,7 @@ func TestTaprootAssetsDaemon(t *testing.T) {
 			tapdHarness, uniHarness, proofCourier := setupHarnesses(
 				t1, ht, lndHarness, uniServerLndHarness,
 				testCase.proofCourierType,
+				testCase.reOrgSafeDepth,
 			)
 
 			ht := ht.newHarnessTest(

@@ -68,6 +68,10 @@ type testCase struct {
 	name             string
 	test             func(t *harnessTest)
 	proofCourierType proof.CourierType
+
+	// reOrgSafeDepth, if non-zero, overrides the itest default burial
+	// depth of 1 for the test's primary tapd node.
+	reOrgSafeDepth int32
 }
 
 // harnessTest wraps a regular testing.T providing enhanced error detection
@@ -261,7 +265,7 @@ func (h *harnessTest) addFederationServer(host string, target *tapdHarness) {
 // to each other through an in-memory gRPC connection.
 func setupHarnesses(t *testing.T, ht *harnessTest,
 	lndHarness *lntest.HarnessTest, uniServerLndHarness *node.HarnessNode,
-	proofCourierType proof.CourierType) (*tapdHarness,
+	proofCourierType proof.CourierType, reOrgSafeDepth int32) (*tapdHarness,
 	*universeServerHarness, proof.CourierHarness) {
 
 	// Create a new universe server harness and start it.
@@ -300,6 +304,7 @@ func setupHarnesses(t *testing.T, ht *harnessTest,
 	tapdHarness := setupTapdHarness(
 		t, ht, alice, universeServer, func(params *tapdHarnessParams) {
 			params.proofCourier = proofCourier
+			params.reOrgSafeDepth = reOrgSafeDepth
 		},
 	)
 	return tapdHarness, universeServer, proofCourier
@@ -348,6 +353,10 @@ type tapdHarnessParams struct {
 	// noDefaultUniverseSync indicates whether the default universe server
 	// should be added as a federation server or not.
 	noDefaultUniverseSync bool
+
+	// reOrgSafeDepth, if non-zero, overrides the itest default burial
+	// depth of 1.
+	reOrgSafeDepth int32
 
 	// sqliteDatabaseFilePath is the path to the SQLite database file to
 	// use.
@@ -458,6 +467,7 @@ func setupTapdHarness(t *testing.T, ht *harnessTest,
 		ho.portfolioPilotAddress = params.portfolioPilotAddress
 		ho.sendPriceHint = params.sendPriceHint
 		ho.disableSweepOrphanUtxos = !params.sweepOrphanUtxos
+		ho.reOrgSafeDepth = params.reOrgSafeDepth
 	}
 
 	tapdCfg := tapdConfig{

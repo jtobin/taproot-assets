@@ -105,20 +105,24 @@ var allTestCases = []*testCase{
 	// if the re-org tests run last. So we run them toward the beginning to
 	// reduce the flakiness of the Postgres itest.
 	{
-		name: "re-org mint",
-		test: testReOrgMint,
+		name:           "re-org mint",
+		test:           testReOrgMint,
+		reOrgSafeDepth: 6,
 	},
 	{
-		name: "re-org send",
-		test: testReOrgSend,
+		name:           "re-org send",
+		test:           testReOrgSend,
+		reOrgSafeDepth: 6,
 	},
 	{
-		name: "re-org send v2 address",
-		test: testReOrgSendV2Address,
+		name:           "re-org send v2 address",
+		test:           testReOrgSendV2Address,
+		reOrgSafeDepth: 6,
 	},
 	{
-		name: "re-org mint and send",
-		test: testReOrgMintAndSend,
+		name:           "re-org mint and send",
+		test:           testReOrgMintAndSend,
+		reOrgSafeDepth: 6,
 	},
 	{
 		name:             "basic send unidirectional hashmail courier",

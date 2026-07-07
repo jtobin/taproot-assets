@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg"
@@ -586,9 +587,77 @@ func ConfirmBatch(t *testing.T, minerClient *miner.HarnessMiner,
 	batch := batchResp.Batches[0]
 	require.NotEmpty(t, batch.Batch.BatchTxid)
 
-	return AssertAssetsMinted(
+	mintedAssets := AssertAssetsMinted(
 		t, tapClient, assetRequests, mintTXID, blockHash,
 	)
+
+	// The universe publication of a minted batch is act-gated behind
+	// the genesis transaction's burial and rides the re-org watcher's
+	// outbox, so it lands shortly after the batch finalizes rather
+	// than during it. Callers historically rely on mint completion
+	// implying local universe visibility (and, through the augmenter,
+	// pending supply-commit updates), so wait for each minted asset's
+	// issuance leaf before returning.
+	WaitForMintUniverseLeaves(t, tapClient, mintedAssets)
+
+	return mintedAssets
+}
+
+// WaitForMintUniverseLeaves waits until every minted asset's issuance
+// leaf is visible in the minting node's local universe. The augmenter's
+// supply-commit obligations run before the publication, so leaf
+// visibility also certifies that any supply update events for the batch
+// have been durably recorded.
+func WaitForMintUniverseLeaves(t *testing.T,
+	tapClient commands.RpcClientsBundle,
+	mintedAssets []*taprpc.Asset) {
+
+	t.Helper()
+
+	ctxb := context.Background()
+	for _, mintedAsset := range mintedAssets {
+		uniID := &unirpc.ID{
+			ProofType: unirpc.ProofType_PROOF_TYPE_ISSUANCE,
+		}
+		if mintedAsset.AssetGroup != nil &&
+			len(mintedAsset.AssetGroup.TweakedGroupKey) > 0 {
+
+			groupKey, err := btcec.ParsePubKey(
+				mintedAsset.AssetGroup.TweakedGroupKey,
+			)
+			require.NoError(t, err)
+			uniID.Id = &unirpc.ID_GroupKey{
+				GroupKey: schnorr.SerializePubKey(groupKey),
+			}
+		} else {
+			uniID.Id = &unirpc.ID_AssetId{
+				AssetId: mintedAsset.AssetGenesis.AssetId,
+			}
+		}
+
+		assetID := mintedAsset.AssetGenesis.AssetId
+		require.Eventually(t, func() bool {
+			leaves, err := tapClient.AssetLeaves(
+				ctxb, &unirpc.AssetLeavesRequest{Id: uniID},
+			)
+			if err != nil {
+				return false
+			}
+			for _, leaf := range leaves.Leaves {
+				if leaf.Asset == nil ||
+					leaf.Asset.AssetGenesis == nil {
+
+					continue
+				}
+				genesisID := leaf.Asset.AssetGenesis.AssetId
+				if bytes.Equal(genesisID, assetID) {
+					return true
+				}
+			}
+
+			return false
+		}, defaultWaitTimeout, 200*time.Millisecond)
+	}
 }
 
 func ManualMintSimpleAsset(t *harnessTest, lndNode *node.HarnessNode,

@@ -55,7 +55,12 @@ func testReOrgMint(t *harnessTest) {
 	// Now that we have the asset created, we'll make a new node that'll
 	// serve as the node which'll receive the assets. The existing tapd
 	// node will be used to synchronize universe state.
-	secondTapd := setupTapdHarness(t.t, t, lndBob, t.universeServer)
+	secondTapd := setupTapdHarness(
+		t.t, t, lndBob, t.universeServer,
+		func(params *tapdHarnessParams) {
+			params.reOrgSafeDepth = 6
+		},
+	)
 	defer func() {
 		require.NoError(t.t, secondTapd.stop(!*noDelete))
 	}()
@@ -134,7 +139,12 @@ func testReOrgSend(t *harnessTest) {
 	// serve as the node which'll receive the assets. The existing tapd
 	// node will be used to synchronize universe state.
 	lndBob := t.lndHarness.NewNodeWithCoins("Bob", nil)
-	secondTapd := setupTapdHarness(t.t, t, lndBob, t.universeServer)
+	secondTapd := setupTapdHarness(
+		t.t, t, lndBob, t.universeServer,
+		func(params *tapdHarnessParams) {
+			params.reOrgSafeDepth = 6
+		},
+	)
 	defer func() {
 		require.NoError(t.t, secondTapd.stop(!*noDelete))
 	}()
@@ -272,7 +282,12 @@ func testReOrgSendV2Address(t *harnessTest) {
 	// serve as the node which'll receive the assets. The existing tapd
 	// node will be used to synchronize universe state.
 	lndBob := t.lndHarness.NewNodeWithCoins("Bob", nil)
-	secondTapd := setupTapdHarness(t.t, t, lndBob, t.universeServer)
+	secondTapd := setupTapdHarness(
+		t.t, t, lndBob, t.universeServer,
+		func(params *tapdHarnessParams) {
+			params.reOrgSafeDepth = 6
+		},
+	)
 	defer func() {
 		require.NoError(t.t, secondTapd.stop(!*noDelete))
 	}()
@@ -420,7 +435,12 @@ func testReOrgMintAndSend(t *harnessTest) {
 	// Now that we have the asset created, we'll make a new node that'll
 	// serve as the node which'll receive the assets. The existing tapd
 	// node will be used to synchronize universe state.
-	secondTapd := setupTapdHarness(t.t, t, lndBob, t.universeServer)
+	secondTapd := setupTapdHarness(
+		t.t, t, lndBob, t.universeServer,
+		func(params *tapdHarnessParams) {
+			params.reOrgSafeDepth = 6
+		},
+	)
 	defer func() {
 		require.NoError(t.t, secondTapd.stop(!*noDelete))
 	}()
