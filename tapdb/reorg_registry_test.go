@@ -178,7 +178,9 @@ func TestReorgRegistryLifecycle(t *testing.T) {
 	handlerErr := errors.New("site failure")
 	err = store.Deliver(
 		ctx, id, witnessed,
-		func(context.Context, tapreorg.RegistryTx) error {
+		func(context.Context, tapreorg.RegistryTx,
+			*tapreorg.Anchoring) error {
+
 			return handlerErr
 		},
 	)
@@ -204,7 +206,9 @@ func TestReorgRegistryLifecycle(t *testing.T) {
 	// reset, site converged.
 	err = store.Deliver(
 		ctx, id, witnessed,
-		func(ctx context.Context, tx tapreorg.RegistryTx) error {
+		func(ctx context.Context, tx tapreorg.RegistryTx,
+			_ *tapreorg.Anchoring) error {
+
 			return tx.EnqueueEffect(ctx, testEffect(id, "conf"))
 		},
 	)
@@ -304,7 +308,9 @@ func TestReorgRegistryHandlerAtomicity(t *testing.T) {
 	boom := errors.New("boom")
 	err = store.Deliver(
 		ctx, id, witnessed,
-		func(ctx context.Context, tx tapreorg.RegistryTx) error {
+		func(ctx context.Context, tx tapreorg.RegistryTx,
+			_ *tapreorg.Anchoring) error {
+
 			err := tx.EnqueueEffect(ctx, testEffect(id, "leak"))
 			require.NoError(t, err)
 
@@ -437,7 +443,9 @@ func TestReorgRegistryDependencies(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, store.Withdraw(
 		ctx, loneID,
-		func(ctx context.Context, tx tapreorg.RegistryTx) error {
+		func(ctx context.Context,
+			tx tapreorg.RegistryTx) error {
+
 			return tx.EnqueueEffect(
 				ctx, testEffect(loneID, "undo"),
 			)
@@ -563,7 +571,9 @@ func TestReorgRegistryRapid(t *testing.T) {
 					err := store.Deliver(
 						ctx, id, m.phase,
 						func(context.Context,
-							tapreorg.RegistryTx) error {
+							tapreorg.RegistryTx,
+							*tapreorg.Anchoring,
+						) error {
 
 							return boom
 						},
@@ -807,5 +817,85 @@ func TestReorgRegistryLookupByMatchKey(t *testing.T) {
 	require.NoError(t, err)
 	free2 := testSpec(t, "porter", testOutPoint(5, 0))
 	_, err = store.Register(ctx, free2, 500, nil)
+	require.NoError(t, err)
+}
+
+// TestReorgRegistryDeliveryFreshAggregate pins the reviewer #2
+// contract: the anchoring aggregate handed to the delivery handler is
+// assembled INSIDE the delivery transaction, so candidate enrichment
+// that landed between the caller's scan and Deliver's tx is visible.
+// Without this, handlers that read Spends[i].BlockHeader / MerkleProof
+// (the mint site's witness context, the porter's witness context)
+// could see stale evidence and spuriously fail.
+func TestReorgRegistryDeliveryFreshAggregate(t *testing.T) {
+	t.Parallel()
+
+	store, _ := newReorgStore(t)
+	ctx := context.Background()
+
+	op := testOutPoint(42, 0)
+	id, err := store.Register(
+		ctx, testSpec(t, "porter", op), 500, nil,
+	)
+	require.NoError(t, err)
+
+	// A satisfying candidate lands WITHOUT block enrichment — the
+	// initial state at witness delivery time.
+	w := testWitness(t, 9, 600, op)
+	require.NoError(t, store.UpsertCandidate(
+		ctx, id, tapreorg.CandidateSpend{
+			Verdict:        tapreorg.VerdictSatisfies,
+			W:              w,
+			OnChain:        true,
+			SpentOutPoints: []wire.OutPoint{op},
+		},
+	))
+
+	view, err := store.ChainView(ctx, id)
+	require.NoError(t, err)
+	witnessed := tapreorg.DerivePhase(view)
+	require.IsType(t, tapreorg.Witnessed{}, witnessed)
+	require.NoError(t, store.SetPhase(ctx, id, witnessed))
+
+	// Snapshot the anchoring at scan time: no block header, no
+	// merkle proof.
+	scanned, err := store.GetAnchoring(ctx, id)
+	require.NoError(t, err)
+	require.Len(t, scanned.Spends, 1)
+	require.Nil(t, scanned.Spends[0].BlockHeader)
+	require.Nil(t, scanned.Spends[0].MerkleProof)
+
+	// Sensing enriches the candidate between scan and Deliver.
+	header := wire.BlockHeader{Version: 42}
+	merkle := proof.TxMerkleProof{Bits: []bool{true}}
+	enriched := scanned.Spends[0]
+	enriched.BlockHeader = &header
+	enriched.MerkleProof = &merkle
+	require.NoError(t, store.UpsertCandidate(ctx, id, enriched))
+
+	// Deliver: the handler must observe the fresh (enriched) view,
+	// not the scanned (stale) view.
+	err = store.Deliver(
+		ctx, id, witnessed,
+		func(_ context.Context, _ tapreorg.RegistryTx,
+			fresh *tapreorg.Anchoring) error {
+
+			require.Len(t, fresh.Spends, 1)
+			require.NotNil(
+				t, fresh.Spends[0].BlockHeader,
+				"handler saw stale headerless spend",
+			)
+			require.NotNil(
+				t, fresh.Spends[0].MerkleProof,
+				"handler saw stale merkle-less spend",
+			)
+			require.Equal(
+				t, header.Version,
+				fresh.Spends[0].BlockHeader.Version,
+			)
+
+			return nil
+		},
+	)
 	require.NoError(t, err)
 }

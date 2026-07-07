@@ -121,8 +121,17 @@ type Registry interface {
 	// what makes cascade delivery parent-first structural). If the
 	// sensed phase no longer equals the target, ErrStaleDelivery
 	// is returned and nothing happens.
+	//
+	// The handler receives an Anchoring aggregate assembled inside
+	// the delivery transaction (candidates and their block
+	// enrichment reflect the durable state at the moment the tx
+	// opens, not whatever the caller last scanned). Handlers that
+	// read candidate evidence — the mint site's witness context,
+	// the porter's witness context — thus never see stale
+	// enrichment data.
 	Deliver(ctx context.Context, id AnchoringID, target Phase,
-		handler func(context.Context, RegistryTx) error) error
+		handler func(context.Context, RegistryTx,
+			*Anchoring) error) error
 
 	// RecordDeliveryFailure records a failed delivery attempt:
 	// attempt count, error text, next-attempt time, and the stuck

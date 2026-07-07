@@ -445,7 +445,8 @@ func (s *ReorgRegistryStore) SetPhase(ctx context.Context,
 // Abandoned.
 func (s *ReorgRegistryStore) Deliver(ctx context.Context,
 	id tapreorg.AnchoringID, target tapreorg.Phase,
-	handler func(context.Context, tapreorg.RegistryTx) error) error {
+	handler func(context.Context, tapreorg.RegistryTx,
+		*tapreorg.Anchoring) error) error {
 
 	targetCode, targetEv, err := tapreorg.EncodePhase(target)
 	if err != nil {
@@ -478,8 +479,20 @@ func (s *ReorgRegistryStore) Deliver(ctx context.Context,
 		}
 
 		if handler != nil {
+			// Re-assemble the anchoring inside this transaction
+			// so its chain view reflects any candidate
+			// enrichment sensing has committed between the
+			// caller's pending scan and here. Handlers that
+			// read Spends[i].BlockHeader / MerkleProof cannot
+			// see stale evidence.
+			fresh, err := assembleAnchoring(ctx, q, row)
+			if err != nil {
+				return fmt.Errorf("unable to assemble "+
+					"anchoring for delivery: %w", err)
+			}
+
 			handle := &registryTx{q: q, clock: s.clock}
-			if err := handler(ctx, handle); err != nil {
+			if err := handler(ctx, handle, fresh); err != nil {
 				return err
 			}
 		}

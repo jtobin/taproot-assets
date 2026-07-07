@@ -1547,8 +1547,10 @@ func (w *Watcher) deliverOne(ctx context.Context, anchoring *Anchoring) {
 	target := anchoring.Phase
 	err := w.cfg.Registry.Deliver(
 		ctx, anchoring.ID, target,
-		func(ctx context.Context, tx RegistryTx) error {
-			return dispatchPhase(ctx, site, tx, anchoring, target)
+		func(ctx context.Context, tx RegistryTx,
+			fresh *Anchoring) error {
+
+			return dispatchPhase(ctx, site, tx, fresh, target)
 		},
 	)
 	switch {
