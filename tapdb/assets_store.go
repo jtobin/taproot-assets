@@ -2947,24 +2947,6 @@ func (a *AssetStore) queryCommitments(ctx context.Context,
 	return selectedAssets, nil
 }
 
-// LogPendingParcel marks an outbound parcel as pending on disk. This commits
-// the set of changes to disk (the pending inputs and outputs) but doesn't mark
-// the batched spend as being finalized. The final lease owner and expiry are
-// the lease parameters that are set on the input UTXOs, since we assume the
-// parcel will be broadcast after this call. So we'll want to lock the input
-// UTXOs for forever, which means the expiry should be far in the future.
-func (a *AssetStore) LogPendingParcel(ctx context.Context,
-	spend *tapfreighter.OutboundParcel, finalLeaseOwner [32]byte,
-	finalLeaseExpiry time.Time) error {
-
-	var writeTxOpts AssetStoreTxOptions
-	return a.db.ExecTx(ctx, &writeTxOpts, func(q ActiveAssetsStore) error {
-		return a.applyPendingParcel(
-			ctx, q, spend, finalLeaseOwner, finalLeaseExpiry,
-		)
-	})
-}
-
 // insertAssetTransferInput inserts a new asset transfer input into the DB.
 func insertAssetTransferInput(ctx context.Context, q ActiveAssetsStore,
 	transferID int64, input tapfreighter.TransferInput,
@@ -3530,48 +3512,6 @@ func (a *AssetStore) ConfirmProofDelivery(ctx context.Context,
 	if err != nil {
 		return fmt.Errorf("failed to confirm transfer output proof "+
 			"delivery status in db: %w", err)
-	}
-
-	return nil
-}
-
-// LogAnchorTxConfirm updates the send package state on disk to reflect the
-// confirmation of the anchor transaction, ensuring the on-chain reference
-// information is up to date.
-func (a *AssetStore) LogAnchorTxConfirm(ctx context.Context,
-	conf *tapfreighter.AssetConfirmEvent,
-	burns []*tapfreighter.AssetBurn) error {
-
-	var (
-		writeTxOpts    AssetStoreTxOptions
-		localProofKeys []tapfreighter.OutputIdentifier
-	)
-	err := a.db.ExecTx(ctx, &writeTxOpts, func(q ActiveAssetsStore) error {
-		var err error
-		localProofKeys, err = a.applyAnchorTxConfirm(
-			ctx, q, conf, burns,
-		)
-
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("failed to confirm transfer: %w", err)
-	}
-
-	// Notify any event subscribers that there are new proofs. We do this
-	// outside of the transaction to avoid the subscribers trying to look up
-	// the proofs before they are committed.
-	for idx := range localProofKeys {
-		localKey := localProofKeys[idx]
-		finalProof := conf.FinalProofs[localKey]
-		a.eventDistributor.NotifySubscribers(finalProof.Blob)
-	}
-	for assetID := range conf.PassiveAssetProofFiles {
-		passiveProofs := conf.PassiveAssetProofFiles[assetID]
-		for idx := range passiveProofs {
-			passiveProof := passiveProofs[idx]
-			a.eventDistributor.NotifySubscribers(passiveProof.Blob)
-		}
 	}
 
 	return nil

@@ -45,7 +45,9 @@ func (a *AssetStore) ApplyPendingParcel(ctx context.Context,
 	)
 }
 
-// applyPendingParcel is the extracted body of LogPendingParcel.
+// applyPendingParcel stakes an outbound parcel within the caller's
+// transaction: the transfer row, its inputs and outputs, and the
+// input leases.
 func (a *AssetStore) applyPendingParcel(ctx context.Context,
 	q ActiveAssetsStore, spend *tapfreighter.OutboundParcel,
 	finalLeaseOwner [32]byte, finalLeaseExpiry time.Time) error {
@@ -161,8 +163,9 @@ func (a *AssetStore) ApplyAnchorTxConfirm(ctx context.Context,
 	return a.applyAnchorTxConfirm(ctx, q, conf, burns)
 }
 
-// applyAnchorTxConfirm is the extracted, convergent body of
-// LogAnchorTxConfirm.
+// applyAnchorTxConfirm applies an anchor transaction's confirmation
+// within the caller's transaction, convergently: the transfer's block
+// context, its outputs' assets and proofs, and its burns.
 func (a *AssetStore) applyAnchorTxConfirm(ctx context.Context,
 	q ActiveAssetsStore, conf *tapfreighter.AssetConfirmEvent,
 	burns []*tapfreighter.AssetBurn) ([]tapfreighter.OutputIdentifier,
