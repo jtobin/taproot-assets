@@ -288,7 +288,7 @@ type RegistrationSpec struct {
 	// registrations by the same site with the same MatchKey refer
 	// to the same essential fact; the registry enforces this via a
 	// unique index and sites use it to look up their own existing
-	// anchorings in O(1) via LookupByPayload. Sites use the
+	// anchorings in O(1) via LookupByMatchKey. Sites use the
 	// anchor/genesis/commit txid as the key; empty is allowed for
 	// tests and legacy rows and disables the uniqueness constraint.
 	MatchKey []byte

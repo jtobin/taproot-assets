@@ -6,7 +6,7 @@
 --
 -- The pattern replaces a linear scan through AllAnchorings(site) +
 -- payload decode: sites now look up their existing anchoring via
--- LookupByPayload in O(1). Match keys are opaque bytes; the null
+-- LookupByMatchKey in O(1). Match keys are opaque bytes; the null
 -- key represents "no match key set" (legacy rows created before
 -- this migration) and is excluded from the uniqueness constraint so
 -- those rows do not conflict with each other.
