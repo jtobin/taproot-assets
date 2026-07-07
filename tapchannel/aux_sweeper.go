@@ -2604,9 +2604,18 @@ func (a *AuxSweeper) registerAndBroadcastSweep(req *sweep.BumpRequest,
 	sweepTx *wire.MsgTx, fee btcutil.Amount,
 	outpointToTxIndex map[wire.OutPoint]int) error {
 
-	// TODO(roasbeef): need to handle replacement -- will porter just
-	// upsert in place?
-
+	// Replacement handling. A sweep replacement (RBF, CPFP, or an
+	// input-set change on fee-bump) reaches here as a fresh call
+	// with a different txid, which the porter registers as a new
+	// anchoring keyed on that txid. Original and replacement live
+	// side by side; when the replacement buries, the original's
+	// EvaluateCandidate treats it as a foreign spend of its trigger
+	// inputs, which drives the original anchoring through
+	// Conflicted to Abandoned. The porter's OnAbandoned handler
+	// compensates the abandoned transfer (transfer superseded,
+	// UTXOs unswept, leases released, passive assets restored), so
+	// no upsert-in-place is required here — form-change composition
+	// handles it structurally.
 	log.Infof("Register broadcast of sweep_tx=%v",
 		limitSpewer.Sdump(sweepTx))
 
