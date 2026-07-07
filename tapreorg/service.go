@@ -1169,6 +1169,15 @@ func (w *Watcher) handleCandidateConf(ctx context.Context,
 // candidate at the anchoring's threshold depth and re-derives. The
 // certification is trusted absolutely: the notifier only fires it
 // for a transaction genuinely at that depth on the dominant chain.
+//
+// Unlike handleCandidateConf, this handler does NOT delete the
+// candidate's pending-map entry: the location conf that necessarily
+// preceded this certification already cleared it (act cert requires
+// the tx to be confirmed first, and the location conf is what
+// registered the act-conf subscription). The pending-map lookup
+// below is a fallback for restart-recovery paths where the location
+// event's in-memory bookkeeping was lost but the durable candidate
+// row already carries the verdict.
 func (w *Watcher) handleCandidateActConf(ctx context.Context,
 	ev evCandidateActConf) {
 
