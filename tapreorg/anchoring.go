@@ -226,17 +226,6 @@ func (w Witness) Tx() *wire.MsgTx {
 	return w.tx.Copy()
 }
 
-// Depth returns the confirmation depth of the witness at the given
-// best height: 1 at inclusion height, 0 if the best height precedes
-// it.
-func (w Witness) Depth(bestHeight uint32) uint32 {
-	if bestHeight < w.height {
-		return 0
-	}
-
-	return bestHeight - w.height + 1
-}
-
 // ForeignSpend is an observed foreign spend of a trigger outpoint: the
 // spent outpoint plus the located spending transaction.
 type ForeignSpend struct {

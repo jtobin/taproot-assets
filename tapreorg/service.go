@@ -491,13 +491,16 @@ func (w *Watcher) sensingLoop(initial []*Anchoring) {
 			if !ok {
 				return
 			}
+			// The stored best height feeds new registrations
+			// their CreatedHeight. Nothing else derives from it:
+			// act finality is driven exclusively by the sticky
+			// ActCertified flag written from the notifier's
+			// threshold-conf certifications (candidates
+			// resense on their own upsert), so there is no
+			// per-block re-derive-all — DerivePhase is a
+			// function of the anchoring's chain view, not the
+			// tip height.
 			w.bestHeight.Store(uint32(height))
-
-			// Depth is a function of best height: every live
-			// anchoring may have crossed a threshold.
-			for id := range w.sensors {
-				w.rederive(ctx, id)
-			}
 
 		case err := <-epochErr:
 			if err != nil && !fn.IsCanceled(err) &&
