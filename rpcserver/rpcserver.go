@@ -11945,6 +11945,12 @@ func (r *RPCServer) DecodeAssetPayReq(ctx context.Context,
 // local universe (e.g. through the use of the universerpc.InsertProof RPC or
 // the universe proof courier and universe sync mechanisms) and this call
 // simply instructs the daemon to detect the transfer as an asset it owns.
+//
+// Recovery invariant. The RPC is caller-driven; a crash between the archive
+// import and the anchoring registration is recovered by the caller retrying.
+// Both ImportProofs (idempotent via archive locator dedupe) and
+// RegisterReceiveAnchoring (idempotent via the anchoring registry's
+// (site, match_key) unique index) tolerate the repeat cleanly.
 func (r *RPCServer) RegisterTransfer(ctx context.Context,
 	req *taprpc.RegisterTransferRequest) (*taprpc.RegisterTransferResponse,
 	error) {

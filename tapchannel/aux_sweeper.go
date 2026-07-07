@@ -1601,6 +1601,13 @@ func importOutputProofs(ctx context.Context, scid lnwire.ShortChannelID,
 // archiver, which creates the asset row as a side effect. The import is
 // idempotent, so it is safe to call this for outputs that have already been
 // materialized through another path.
+//
+// Recovery invariant. A crash between the archive import and the anchoring
+// registration is recovered by LND replaying the force-close resolution on
+// restart, which re-invokes this materialization. Both ImportProofs
+// (idempotent via archive locator dedupe) and RegisterReceiveAnchoring
+// (idempotent via the anchoring registry's (site, match_key) unique index)
+// tolerate the repeat cleanly.
 func (a *AuxSweeper) materializeAssetOutputs(ctx context.Context,
 	outputs []*cmsg.AssetOutput) error {
 

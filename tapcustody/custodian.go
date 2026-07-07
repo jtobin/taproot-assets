@@ -1720,6 +1720,18 @@ func (c *Custodian) assertProofInLocalArchive(p *proof.AnnotatedProof) error {
 
 // setReceiveCompleted updates the address event in the database to mark it as
 // completed successfully and to link it to the proof we received.
+//
+// Recovery invariant. The proof was already imported into the archive by the
+// caller (mapProofToEvent's ImportProofs, or the mailbox / courier import
+// path), so we're crossing three writes: archive import (already durable) →
+// RegisterReceiveAnchoring → CompleteEvent. A crash between the archive
+// import and CompleteEvent is recovered by the custodian's startup path: the
+// address event stays at its pre-Completed status (StatusProofReceived or
+// earlier), inspectWalletTx re-drives the pipeline for its wallet
+// transaction, and the flow lands back here. Both ImportProofs (idempotent
+// via archive locator dedupe) and RegisterReceiveAnchoring (idempotent via
+// the anchoring registry's (site, match_key) unique index) tolerate the
+// repeat, and CompleteEvent is the final act that closes the resume window.
 func (c *Custodian) setReceiveCompleted(event *address.Event,
 	proofFile *proof.File) error {
 
