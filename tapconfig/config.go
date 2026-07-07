@@ -203,7 +203,6 @@ type Config struct {
 
 	MboxServerConfig authmailbox.ServerConfig
 
-	ReOrgWatcher *tapreorg.LegacyWatcher
 
 	// AnchoringWatcher is the righteous re-org watcher: sites
 	// register speculative anchorings with it, and it converges

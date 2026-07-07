@@ -14,7 +14,6 @@ import (
 	"github.com/lightninglabs/lndclient"
 	tap "github.com/lightninglabs/taproot-assets"
 	"github.com/lightninglabs/taproot-assets/address"
-	"github.com/lightninglabs/taproot-assets/asset"
 	"github.com/lightninglabs/taproot-assets/authmailbox"
 	"github.com/lightninglabs/taproot-assets/fn"
 	"github.com/lightninglabs/taproot-assets/healthcheck"
@@ -404,28 +403,10 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 		}
 	}
 
-	reOrgWatcher := tapreorg.NewLegacyWatcher(&tapreorg.LegacyConfig{
-		ChainBridge:   chainBridge,
-		GroupVerifier: groupVerifier,
-		ProofArchive:  proofArchive,
-		IgnoreChecker: ignoreCheckerOpt,
-		NonBuriedAssetFetcher: func(ctx context.Context,
-			minHeight int32) ([]*asset.ChainAsset, error) {
 
-			return assetStore.FetchAllAssets(
-				ctx, false, true, &tapdb.AssetQueryFilters{
-					MinAnchorHeight: minHeight,
-				},
-			)
-		},
-		SafeDepth: cfg.ReOrgSafeDepth,
-		ErrChan:   mainErrChan,
-	})
-
-	// The righteous watcher runs alongside the legacy one until
-	// every site has migrated onto it. Its registry advances run
-	// site handlers in the same transaction, so its executor is
-	// instantiated at the full generated query set.
+	// The watcher's registry advances run site handlers in the same
+	// transaction, so its executor is instantiated at the full
+	// generated query set.
 	reorgRegistryDB := tapdb.NewTransactionExecutor(
 		db, func(tx *sql.Tx) *sqlc.Queries {
 			return db.WithTx(tx)
@@ -740,7 +721,6 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 			ProofReader:            porterProofReader,
 			ProofWriter:            proofFileStore,
 			ProofCourierDispatcher: proofCourierDispatcher,
-			ProofWatcher:           reOrgWatcher,
 			IgnoreChecker:          ignoreCheckerOpt,
 			ErrChan:                mainErrChan,
 			BurnCommitter:          supplyCommitManager,
@@ -766,7 +746,6 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 				universeFederation,
 				defaultUniverseSyncBatchSize,
 			),
-			ProofWatcher:  reOrgWatcher,
 			IgnoreChecker: ignoreCheckerOpt,
 			GenesisTxAugmenter: supplycommit.NewGenesisAugmenter(
 				supplycommit.GenesisAugmenterCfg{
@@ -799,7 +778,6 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 		ProofCourierDispatcher: proofCourierDispatcher,
 		MboxBackoffCfg:         cfg.UniverseRpcCourier.BackoffCfg,
 		ProofRetrievalDelay:    cfg.CustodianProofRetrievalDelay,
-		ProofWatcher:           reOrgWatcher,
 		IgnoreChecker:          ignoreCheckerOpt,
 		AnchoringWatcher:       anchoringWatcher,
 		AnchoringLog:           assetStore,
@@ -954,7 +932,6 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 			ChainBridge:        chainBridge,
 			IgnoreChecker:      ignoreCheckerOpt,
 			AnchoringRegistrar: assetCustodian,
-			ProofWatcher:       reOrgWatcher,
 		},
 	)
 
@@ -966,7 +943,6 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 		EnableChannelFeatures:    enableChannelFeatures,
 		Lnd:                      lndServices,
 		ChainParams:              tapChainParams,
-		ReOrgWatcher:             reOrgWatcher,
 		AnchoringWatcher:         anchoringWatcher,
 		AnchoringRegistry:        anchoringRegistry,
 		AssetMinter:              assetMinter,
