@@ -9,6 +9,7 @@ import (
 	"github.com/lightninglabs/taproot-assets/tapdb"
 	"github.com/lightninglabs/taproot-assets/tapgarden"
 	"github.com/lightninglabs/taproot-assets/tapnode/tapnodemock"
+	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightninglabs/taproot-assets/tapscript"
 	"github.com/stretchr/testify/require"
 )
@@ -51,17 +52,17 @@ func NewMint(tb testing.TB) *Mint {
 
 	planter := tapgarden.NewChainPlanter(tapgarden.PlanterConfig{
 		GardenKit: tapgarden.GardenKit{
-			Wallet:       wallet,
-			ChainBridge:  chainBridge,
-			BatchStore:   mintingStore,
-			MintingRefs:  mintingStore,
-			TreeStore:    &treeMgr,
-			KeyRing:      st.KeyRing,
-			GenSigner:    genSigner,
-			GenTxBuilder: &tapscript.GroupTxBuilder{},
-			TxValidator:  &tap.ValidatorV0{},
-			ProofFiles:   proof.NewMockProofArchive(),
-			ProofWatcher: &tapgarden.MockProofWatcher{},
+			Wallet:           wallet,
+			ChainBridge:      chainBridge,
+			BatchStore:       mintingStore,
+			MintingRefs:      mintingStore,
+			TreeStore:        &treeMgr,
+			KeyRing:          st.KeyRing,
+			GenSigner:        genSigner,
+			GenTxBuilder:     &tapscript.GroupTxBuilder{},
+			TxValidator:      &tap.ValidatorV0{},
+			ProofFiles:       proof.NewMockProofArchive(),
+			AnchoringWatcher: tapreorg.NewMockRegistrar(),
 		},
 		ChainParams:  st.Config.ChainParams,
 		ProofUpdates: proof.NewMockProofArchive(),

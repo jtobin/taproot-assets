@@ -37,6 +37,7 @@ import (
 	_ "github.com/lightninglabs/taproot-assets/tapdb" // Register relevant drivers.
 	"github.com/lightninglabs/taproot-assets/tapgarden"
 	"github.com/lightninglabs/taproot-assets/tapnode/tapnodemock"
+	"github.com/lightninglabs/taproot-assets/tapreorg"
 	"github.com/lightninglabs/taproot-assets/tapscript"
 	"github.com/lightninglabs/taproot-assets/tapsend"
 	"github.com/lightningnetwork/lnd/input"
@@ -111,7 +112,7 @@ type mintingTestHarness struct {
 
 	proofFiles *proof.MockProofArchive
 
-	proofWatcher *tapgarden.MockProofWatcher
+	registrar *tapreorg.MockRegistrar
 
 	// augmenter is wired into GardenKit.GenesisTxAugmenter when
 	// non-nil, otherwise the planter falls back to NoOpAugmenter.
@@ -142,7 +143,7 @@ func newMintingTestHarness(t *testing.T,
 		wallet:       tapnodemock.NewWalletAnchor(),
 		chain:        tapnodemock.NewChainBridge(),
 		proofFiles:   archiver,
-		proofWatcher: &tapgarden.MockProofWatcher{},
+		registrar:    tapreorg.NewMockRegistrar(),
 		keyRing:      keyRing,
 		genSigner:    genSigner,
 		genTxBuilder: &tapscript.GroupTxBuilder{},
@@ -171,7 +172,7 @@ func (t *mintingTestHarness) refreshChainPlanter() {
 			GenTxBuilder:       t.genTxBuilder,
 			TxValidator:        t.txValidator,
 			ProofFiles:         t.proofFiles,
-			ProofWatcher:       t.proofWatcher,
+			AnchoringWatcher:   t.registrar,
 			GenesisTxAugmenter: t.augmenter,
 		},
 		ChainParams:  *chainParams,
@@ -523,6 +524,38 @@ func (t *mintingTestHarness) progressCaretaker(isFunded bool,
 	}
 
 	return t.assertConfReqSent(tx, block)
+}
+
+// progressCaretakerMissingBlock drives a caretaker to broadcast like
+// progressCaretaker, but the returned confirmation closure leaves the
+// witness block unknown to the chain bridge.
+func (t *mintingTestHarness) progressCaretakerMissingBlock(isFunded bool,
+	batchSibling *commitment.TapscriptPreimage,
+	feeRate *chainfee.SatPerKWeight) func() {
+
+	if !isFunded {
+		_ = t.assertGenesisTxFunded(feeRate)
+	}
+	t.assertGenesisPsbtFinalized(batchSibling)
+	tx := t.assertTxPublished()
+
+	merkleTree := blockchain.BuildMerkleTreeStore(
+		[]*btcutil.Tx{btcutil.NewTx(tx)}, false,
+	)
+	merkleRoot := merkleTree[len(merkleTree)-1]
+	blockHeader := wire.NewBlockHeader(
+		0, chaincfg.MainNetParams.GenesisHash, merkleRoot, 0, 0,
+	)
+	block := &wire.MsgBlock{
+		Header:       *blockHeader,
+		Transactions: []*wire.MsgTx{tx},
+	}
+
+	t.assertAnchoringRegistered(tx)
+
+	return func() {
+		t.confirmAnchoring(tx, block)
+	}
 }
 
 // finalizeBatchAssertFrozen fires the ticker that forces the planter to create
@@ -1103,19 +1136,68 @@ func (t *mintingTestHarness) assertTxPublished() *wire.MsgTx {
 	return *tx
 }
 
-// assertConfReqSent asserts that a confirmation request has been sent. If so,
-// then a closure is returned that once called will send a confirmation
-// notification.
+// assertAnchoringRegistered waits until the genesis transaction is
+// staked on the re-org watcher as a speculative anchoring.
+func (t *mintingTestHarness) assertAnchoringRegistered(tx *wire.MsgTx) {
+	t.Helper()
+
+	ctx := context.Background()
+	spent := make(map[wire.OutPoint]struct{}, len(tx.TxIn))
+	for _, txIn := range tx.TxIn {
+		spent[txIn.PreviousOutPoint] = struct{}{}
+	}
+
+	require.Eventually(t, func() bool {
+		anchorings, err := t.registrar.AllAnchorings(
+			ctx, tapgarden.MintSiteID,
+		)
+		if err != nil {
+			return false
+		}
+		for _, anchoring := range anchorings {
+			points := anchoring.Triggers.OutPoints()
+			for _, point := range points {
+				if _, ok := spent[point.OutPoint]; ok {
+					return true
+				}
+			}
+		}
+
+		return false
+	}, defaultTimeout, 10*time.Millisecond)
+}
+
+// confirmAnchoring flips the anchoring's delivered phase to witnessed
+// at the given block, which is what the cultivator's wait observes.
+func (t *mintingTestHarness) confirmAnchoring(tx *wire.MsgTx,
+	block *wire.MsgBlock) {
+
+	t.Helper()
+
+	blockHash := block.BlockHash()
+	numConfirmed, err := t.registrar.ConfirmSpend(
+		tx, blockHash, 1, 0, block.Header,
+		proof.TxMerkleProof{
+			Bits:  []bool{true},
+			Nodes: []chainhash.Hash{blockHash},
+		},
+	)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, numConfirmed, 1)
+}
+
+// assertConfReqSent asserts that the genesis transaction was staked on
+// the re-org watcher as a speculative anchoring. The returned closure
+// confirms it: the block is recorded with the mock chain bridge and
+// the anchoring's delivered phase flips to witnessed.
 func (t *mintingTestHarness) assertConfReqSent(tx *wire.MsgTx,
 	block *wire.MsgBlock) func() {
 
-	reqNo, err := fn.RecvOrTimeout(
-		t.chain.ConfReqSignal, defaultTimeout,
-	)
-	require.NoError(t, err)
+	t.assertAnchoringRegistered(tx)
 
 	return func() {
-		t.chain.SendConfNtfn(*reqNo, &chainhash.Hash{}, 1, 0, block, tx)
+		t.chain.SetBlock(block.BlockHash(), block)
+		t.confirmAnchoring(tx, block)
 	}
 }
 
@@ -1506,41 +1588,45 @@ func testFinalizeBatch(t *mintingTestHarness) {
 		&wg, respChan, "failed to estimate fee",
 	)
 
-	// Retry finalize on the same batch, but set TX confirmation
+	// Retry finalize on the same batch, but set the anchoring
 	// registration to fail.
-	t.chain.FailConfOnce()
-
-	// The retry should succeed at funding and freezing, but the
-	// caretaker should propagate the confirmation error.
-	t.finalizeBatch(&wg, respChan, nil)
-
-	_ = t.progressCaretaker(false, nil, nil)
-	caretakerCount++
-
-	t.assertFinalizeBatch(&wg, respChan, "")
-	caretakerErr := <-t.errChan
-	require.ErrorContains(
-		t, caretakerErr, "error getting confirmation",
+	t.registrar.FailNextRegister(
+		fmt.Errorf("error getting confirmation"),
 	)
 
-	// The stopped caretaker will still exist but there should
-	// be no pending batch.
+	// The retry should succeed at funding and freezing, but the
+	// caretaker should propagate the registration error. The stake
+	// precedes the broadcast, so no transaction is published.
+	t.finalizeBatch(&wg, respChan, nil)
+
+	_ = t.assertGenesisTxFunded(nil)
+	t.assertGenesisPsbtFinalized(nil)
+
+	// The registration failure happens in the caretaker's
+	// synchronous phase, before anything reaches the chain: it
+	// surfaces in the finalize response, the caretaker never enters
+	// the active set, and the batch is cancelled.
+	t.assertFinalizeBatch(
+		&wg, respChan, "unable to register mint anchoring",
+	)
+	t.assertNoError()
+
 	t.assertNoPendingBatch()
 	t.assertNumCaretakersActive(caretakerCount)
 	t.assertLastBatchState(
-		batchCount, tapgarden.BatchStateBroadcast,
+		batchCount, tapgarden.BatchStateSeedlingCancelled,
 	)
 
-	// Queue another batch, set TX confirmation to succeed, and
-	// set the confirmation event to be empty.
+	// Queue another batch whose confirmation carries a block the
+	// chain bridge cannot serve: the cultivator's witness-block
+	// fetch must surface the failure.
 	t.queueInitialBatch(numSeedlings)
-	t.chain.EmptyConfOnce()
 
 	// Start a new caretaker that should reach TX broadcast.
 	t.finalizeBatch(&wg, respChan, nil)
 	batchCount++
 
-	sendConfNtfn := t.progressCaretaker(false, nil, nil)
+	sendConfNtfn := t.progressCaretakerMissingBlock(false, nil, nil)
 	caretakerCount++
 
 	// Trigger the confirmation event, which should cause the
@@ -1548,9 +1634,9 @@ func testFinalizeBatch(t *mintingTestHarness) {
 	sendConfNtfn()
 
 	t.assertFinalizeBatch(&wg, respChan, "")
-	caretakerErr = <-t.errChan
+	caretakerErr := <-t.errChan
 	require.ErrorContains(
-		t, caretakerErr, "got empty confirmation",
+		t, caretakerErr, "unable to fetch witness block",
 	)
 
 	// The stopped caretaker will still exist but there should
@@ -2213,186 +2299,6 @@ func (f *failingConfirmAugmenter) OnBatchConfirmed(_ context.Context,
 
 var _ tapgarden.GenesisTxAugmenter = (*failingConfirmAugmenter)(nil)
 
-// testOnBatchConfirmedFailureAbortsConfirmation asserts that a failure
-// returned from GenesisTxAugmenter.OnBatchConfirmed aborts the mint
-// confirmation: the batch stays in BatchStateBroadcast on disk so the
-// confirmation branch re-runs on restart. This pins the essential
-// completion contract of the hook -- suppressing its error would let
-// the mint advance while still owing the supply-commit event.
-func testOnBatchConfirmedFailureAbortsConfirmation(t *mintingTestHarness) {
-	// Wire the harness with a failing augmenter. The first pass fails
-	// at OnBatchConfirmed; after the restart the augmenter is flipped
-	// to succeed so the retry can complete cleanly.
-	aug := &failingConfirmAugmenter{}
-	aug.shouldFail.Store(true)
-	t.augmenter = aug
-	t.refreshChainPlanter()
-
-	// Drive Pending -> Frozen -> Committed -> Broadcast.
-	const numSeedlings = 3
-	_ = t.queueInitialBatch(numSeedlings)
-	frozenBatch := t.finalizeBatchAssertFrozen(false)
-	t.assertBatchCommitted(frozenBatch.BatchKey.PubKey)
-	t.assertGenesisPsbtFinalized(nil)
-	tx := t.assertTxPublished()
-
-	// Assemble the block that will accompany the confirmation.
-	merkleTree := blockchain.BuildMerkleTreeStore(
-		[]*btcutil.Tx{btcutil.NewTx(tx)}, false,
-	)
-	merkleRoot := merkleTree[len(merkleTree)-1]
-	blockHeader := wire.NewBlockHeader(
-		0, chaincfg.MainNetParams.GenesisHash, merkleRoot, 0, 0,
-	)
-	block := &wire.MsgBlock{
-		Header:       *blockHeader,
-		Transactions: []*wire.MsgTx{tx},
-	}
-
-	// Deliver the confirmation. The augmenter's OnBatchConfirmed will
-	// return an error, so the Confirmed branch aborts before
-	// MarkBatchConfirmed and the caretaker goroutine exits.
-	sendConfNtfn := t.assertConfReqSent(tx, block)
-	sendConfNtfn()
-
-	// Give the caretaker time to process the confirmation and unwind
-	// the Confirmed branch. The batch on disk must remain at
-	// BatchStateBroadcast -- MarkBatchConfirmed was not called.
-	require.Never(t, func() bool {
-		batches, err := t.store.FetchAllBatches(context.Background())
-		require.NoError(t, err)
-		if len(batches) != 1 {
-			return false
-		}
-		return batches[0].State() != tapgarden.BatchStateBroadcast
-	}, 500*time.Millisecond, 50*time.Millisecond,
-		"batch advanced past Broadcast despite augmenter failure")
-
-	// Simulate a restart with a now-succeeding augmenter. The fresh
-	// caretaker resumes the Broadcast batch, re-publishes the tx, and
-	// re-registers for a confirmation.
-	aug.shouldFail.Store(false)
-	t.refreshChainPlanter()
-	select {
-	case <-t.errChan:
-	default:
-	}
-
-	_ = t.assertTxPublished()
-	sendConfNtfn = t.assertConfReqSent(tx, block)
-	sendConfNtfn()
-
-	// With OnBatchConfirmed now returning nil, MarkBatchConfirmed
-	// runs and the batch advances all the way to Finalized.
-	err := wait.Predicate(func() bool {
-		batches, err := t.store.FetchAllBatches(
-			context.Background(),
-		)
-		require.NoError(t, err)
-		if len(batches) != 1 {
-			return false
-		}
-		return batches[0].State() == tapgarden.BatchStateFinalized
-	}, defaultTimeout)
-	require.NoError(
-		t, err, "batch never advanced to Finalized on retry",
-	)
-
-	t.assertNumCaretakersActive(0)
-}
-
-// testWatchProofsFailureAbortsConfirmation asserts that a failure
-// returned from ProofWatcher.WatchProofs aborts mint confirmation:
-// the batch stays in BatchStateBroadcast on disk so the whole
-// confirmation branch re-runs on restart. This pins the ordering
-// invariant that MarkBatchConfirmed is the LAST persistence write
-// in the Confirmed branch -- under the pre-A2 ordering
-// (MarkBatchConfirmed before WatchProofs), a WatchProofs failure
-// would leave the batch at BatchStateConfirmed and this assertion
-// would fail. The invariant matters because a batch at disk-
-// Confirmed with no registered re-org callback silently drops
-// universe re-publish on subsequent re-orgs.
-func testWatchProofsFailureAbortsConfirmation(t *mintingTestHarness) {
-	// Wire the harness so the mock re-org watcher rejects the
-	// registration on the first pass; the retry after restart
-	// receives a fresh MockProofWatcher (zero ShouldFail) and
-	// succeeds.
-	t.proofWatcher.ShouldFail.Store(true)
-	t.refreshChainPlanter()
-
-	// Drive Pending -> Frozen -> Committed -> Broadcast.
-	const numSeedlings = 3
-	_ = t.queueInitialBatch(numSeedlings)
-	frozenBatch := t.finalizeBatchAssertFrozen(false)
-	t.assertBatchCommitted(frozenBatch.BatchKey.PubKey)
-	t.assertGenesisPsbtFinalized(nil)
-	tx := t.assertTxPublished()
-
-	// Assemble the confirmation block.
-	merkleTree := blockchain.BuildMerkleTreeStore(
-		[]*btcutil.Tx{btcutil.NewTx(tx)}, false,
-	)
-	merkleRoot := merkleTree[len(merkleTree)-1]
-	blockHeader := wire.NewBlockHeader(
-		0, chaincfg.MainNetParams.GenesisHash, merkleRoot, 0, 0,
-	)
-	block := &wire.MsgBlock{
-		Header:       *blockHeader,
-		Transactions: []*wire.MsgTx{tx},
-	}
-
-	// Deliver the confirmation. WatchProofs will fail and the
-	// Confirmed branch must abort before MarkBatchConfirmed.
-	sendConfNtfn := t.assertConfReqSent(tx, block)
-	sendConfNtfn()
-
-	// The batch on disk must remain at BatchStateBroadcast. If A2's
-	// ordering regressed and MarkBatchConfirmed ran before the
-	// WatchProofs failure, we'd see BatchStateConfirmed here
-	// instead.
-	require.Never(t, func() bool {
-		batches, err := t.store.FetchAllBatches(context.Background())
-		require.NoError(t, err)
-		if len(batches) != 1 {
-			return false
-		}
-		return batches[0].State() != tapgarden.BatchStateBroadcast
-	}, 500*time.Millisecond, 50*time.Millisecond,
-		"batch advanced past Broadcast despite WatchProofs failure")
-
-	// Simulate a restart with a now-succeeding re-org watcher. The
-	// fresh caretaker resumes the Broadcast batch, re-publishes the
-	// tx, and re-registers for a confirmation.
-	t.proofWatcher.ShouldFail.Store(false)
-	t.refreshChainPlanter()
-	select {
-	case <-t.errChan:
-	default:
-	}
-
-	_ = t.assertTxPublished()
-	sendConfNtfn = t.assertConfReqSent(tx, block)
-	sendConfNtfn()
-
-	// With WatchProofs now returning nil, the Confirmed branch
-	// completes and the batch advances to Finalized.
-	err := wait.Predicate(func() bool {
-		batches, err := t.store.FetchAllBatches(
-			context.Background(),
-		)
-		require.NoError(t, err)
-		if len(batches) != 1 {
-			return false
-		}
-		return batches[0].State() == tapgarden.BatchStateFinalized
-	}, defaultTimeout)
-	require.NoError(
-		t, err, "batch never advanced to Finalized on retry",
-	)
-
-	t.assertNumCaretakersActive(0)
-}
-
 // mintingStoreTestCase is used to programmatically run a series of test cases
 // that are parametrized based on a fresh minting store.
 type mintingStoreTestCase struct {
@@ -2437,14 +2343,6 @@ var testCases = []mintingStoreTestCase{
 	{
 		name:     "fund_seal_on_restart",
 		testFunc: testFundSealOnRestart,
-	},
-	{
-		name:     "on_batch_confirmed_failure_aborts_confirmation",
-		testFunc: testOnBatchConfirmedFailureAbortsConfirmation,
-	},
-	{
-		name:     "watch_proofs_failure_aborts_confirmation",
-		testFunc: testWatchProofsFailureAbortsConfirmation,
 	},
 }
 

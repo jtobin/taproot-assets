@@ -20,12 +20,6 @@ type MintProofPublisher interface {
 	// or retry semantics it requires.
 	PublishMintBatch(ctx context.Context,
 		params MintBatchPublishParams) error
-
-	// PublishMintProofUpdates publishes proof updates emitted after a
-	// chain re-org affected previously-minted assets. Each proof is the
-	// updated, fully-encoded minting proof.
-	PublishMintProofUpdates(ctx context.Context,
-		proofs []*proof.Proof) error
 }
 
 // MintBatchPublishParams carries the data needed by a MintProofPublisher
@@ -56,13 +50,6 @@ type NoOpMintProofPublisher struct{}
 // PublishMintBatch is a no-op.
 func (NoOpMintProofPublisher) PublishMintBatch(_ context.Context,
 	_ MintBatchPublishParams) error {
-
-	return nil
-}
-
-// PublishMintProofUpdates is a no-op.
-func (NoOpMintProofPublisher) PublishMintProofUpdates(_ context.Context,
-	_ []*proof.Proof) error {
 
 	return nil
 }
