@@ -230,3 +230,50 @@ func TestSupplyAnchoringAbandonment(t *testing.T) {
 		t, transition.TransitionID, afterRedelivery.TransitionID,
 	)
 }
+
+// TestSupplyAnchoringPushData asserts that the push dispatcher's fetch
+// rebuilds the finalized commitment, its update events and its chain
+// proof from the durable record alone.
+func TestSupplyAnchoringPushData(t *testing.T) {
+	t.Parallel()
+
+	h := newSupplyAnchoringHarness(t)
+	updates := []supplycommit.SupplyUpdateEvent{
+		h.randMintEvent(), h.randIgnoreEvent(),
+	}
+	out := h.stageBroadcastTransition(updates)
+	commitTxid := out.commitTx.TxHash()
+
+	// Before finalization there is no chain proof to push.
+	_, _, _, err := h.commitMachine.FetchCommitmentPushData(
+		h.ctx, h.groupPubKey, commitTxid,
+	)
+	require.ErrorContains(t, err, "no chain proof")
+
+	require.NoError(t, h.applyFinalize(commitTxid, out.chainProof))
+
+	commitment, events, chainProof, err :=
+		h.commitMachine.FetchCommitmentPushData(
+			h.ctx, h.groupPubKey, commitTxid,
+		)
+	require.NoError(t, err)
+
+	require.Equal(t, commitTxid, commitment.Txn.TxHash())
+	require.Equal(
+		t, out.outputKey.SerializeCompressed(),
+		commitment.OutputKey.SerializeCompressed(),
+	)
+	require.NotNil(t, commitment.SupplyRoot)
+
+	require.Equal(
+		t, out.chainProof.Header.BlockHash(),
+		chainProof.Header.BlockHash(),
+	)
+	require.Equal(
+		t, out.chainProof.BlockHeight, chainProof.BlockHeight,
+	)
+
+	require.Len(t, events, len(updates))
+	_, err = supplycommit.NewSupplyLeavesFromEvents(events)
+	require.NoError(t, err)
+}
