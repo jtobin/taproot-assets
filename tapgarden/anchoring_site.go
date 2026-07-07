@@ -326,6 +326,15 @@ func (c *ChainPlanter) DispatchMintPublish(ctx context.Context,
 
 	committedAssets := batch.RootAssetCommitment.CommittedAssets()
 
+	// Read the minted proofs from the archive that includes the
+	// database store: the re-org watcher's re-confirmation handlers
+	// re-stamp the stored proofs there, while the flat-file mirror
+	// keeps the block context the confirmation originally wrote.
+	proofReader := c.cfg.ProofArchive
+	if proofReader == nil {
+		proofReader = c.cfg.ProofFiles
+	}
+
 	// The minted proofs, as the confirmation stored them.
 	mintingProofs := make(
 		map[asset.SerializedKey]*proof.Proof, len(committedAssets),
@@ -336,7 +345,7 @@ func (c *ChainPlanter) DispatchMintPublish(ctx context.Context,
 			mintedAsset.ScriptKey.PubKey,
 		)
 
-		blobBytes, err := c.cfg.ProofFiles.FetchProof(
+		blobBytes, err := proofReader.FetchProof(
 			ctx, proof.Locator{
 				AssetID: fn.Ptr(mintedAsset.ID()),
 				ScriptKey: *mintedAsset.ScriptKey.

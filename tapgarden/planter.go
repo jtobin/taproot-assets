@@ -78,6 +78,13 @@ type GardenKit struct {
 	// ProofFiles stores the set of flat proof files.
 	ProofFiles proof.Archiver
 
+	// ProofArchive is the read surface for dispatching a buried
+	// batch's emissions: it includes the database proof store, whose
+	// proofs the re-org watcher's site handlers re-stamp on
+	// re-confirmation. The flat-file mirror alone can go stale across
+	// a re-org.
+	ProofArchive proof.Archiver
+
 	// AnchoringWatcher is the re-org watcher batches register their
 	// genesis transactions with as speculative anchorings. When set,
 	// confirmation flows through the watcher's registry instead of a

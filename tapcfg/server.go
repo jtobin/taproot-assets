@@ -761,6 +761,7 @@ func genServerConfig(cfg *Config, cfgLogger btclog.Logger,
 			GenTxBuilder: &tapscript.GroupTxBuilder{},
 			TxValidator:  &tap.ValidatorV0{},
 			ProofFiles:   proofFileStore,
+			ProofArchive: proofArchive,
 			MintProofPublisher: mintpublish.NewPublisher(
 				universeFederation,
 				defaultUniverseSyncBatchSize,
