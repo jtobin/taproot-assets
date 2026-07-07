@@ -189,9 +189,34 @@ func (s *SyncVerifyState) ProcessEvent(event Event,
 			ctx, env.AssetSpec, e.SpentCommitOutpoint,
 			canonicalUniverses,
 		)
+
+		// A miss is not terminal: when the sync was triggered by an
+		// on-chain spend, the new commitment provably exists, and
+		// the issuer's push to the universe servers may simply still
+		// be in flight. Wait out the publish grace period and try
+		// again rather than terminating the state machine.
+		retryLater := func(reason error) (*StateTransition, error) {
+			log.Warnf("SupplyVerifier(%s): supply commitment "+
+				"pull unsuccessful (%v), retrying in %v",
+				env.AssetSpec.String(), reason,
+				env.SpendSyncDelay)
+
+			time.Sleep(env.SpendSyncDelay)
+
+			return &StateTransition{
+				NextState: &SyncVerifyState{},
+				NewEvents: lfn.Some(FsmEvent{
+					InternalEvent: []Event{
+						&SyncVerifyEvent{
+							SpentCommitOutpoint: e.SpentCommitOutpoint, //nolint:lll
+						},
+					},
+				}),
+			}, nil
+		}
 		if err != nil {
-			return nil, fmt.Errorf("unable to pull supply "+
-				"commitment: %w", err)
+			return retryLater(fmt.Errorf("unable to pull supply "+
+				"commitment: %w", err))
 		}
 
 		// Verify the pulled commitment.
@@ -199,7 +224,7 @@ func (s *SyncVerifyState) ProcessEvent(event Event,
 			fmt.Errorf("no commitment found"),
 		)
 		if err != nil {
-			return nil, err
+			return retryLater(err)
 		}
 
 		// Fetch all known unspent pre-commitment outputs for the asset
