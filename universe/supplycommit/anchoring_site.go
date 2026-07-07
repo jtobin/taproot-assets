@@ -335,9 +335,16 @@ func registerCommitAnchoring(ctx context.Context, env *Environment,
 		}
 	}
 
-	// Input scripts come from the transition itself: the prior
-	// commitment's output and the pre-commitment outputs.
-	scripts := make(map[wire.OutPoint][]byte)
+	// Input scripts and confirmation heights come from the transition
+	// itself: the prior commitment's output and the pre-commitment
+	// outputs. The heights serve as spend-subscription hints — the
+	// notifier requires a positive hint, and an output cannot be
+	// spent before it was created.
+	type triggerSource struct {
+		pkScript   []byte
+		heightHint uint32
+	}
+	scripts := make(map[wire.OutPoint]triggerSource)
 	transition.OldCommitment.WhenSome(func(old RootCommitment) {
 		if old.Txn == nil ||
 			int(old.TxOutIdx) >= len(old.Txn.TxOut) {
@@ -348,7 +355,14 @@ func registerCommitAnchoring(ctx context.Context, env *Environment,
 			Hash:  old.Txn.TxHash(),
 			Index: old.TxOutIdx,
 		}
-		scripts[op] = old.Txn.TxOut[old.TxOutIdx].PkScript
+		var height uint32
+		old.CommitmentBlock.WhenSome(func(b CommitmentBlock) {
+			height = b.Height
+		})
+		scripts[op] = triggerSource{
+			pkScript:   old.Txn.TxOut[old.TxOutIdx].PkScript,
+			heightHint: max(height, 1),
+		}
 	})
 	for idx := range transition.UnspentPreCommits {
 		preCommit := transition.UnspentPreCommits[idx]
@@ -363,15 +377,30 @@ func registerCommitAnchoring(ctx context.Context, env *Environment,
 			Hash:  preCommit.MintingTxn.TxHash(),
 			Index: preCommit.OutIdx,
 		}
-		scripts[op] = preCommit.MintingTxn.TxOut[preCommit.OutIdx].
-			PkScript
+		scripts[op] = triggerSource{
+			pkScript: preCommit.MintingTxn.
+				TxOut[preCommit.OutIdx].PkScript,
+			heightHint: max(preCommit.BlockHeight, 1),
+		}
 	}
 
 	points := make([]tapreorg.TriggerOutPoint, 0, len(commitTx.TxIn))
 	for _, txIn := range commitTx.TxIn {
+		source, ok := scripts[txIn.PreviousOutPoint]
+		if !ok {
+			// Wallet-funded fee inputs are not part of the
+			// commitment's identity: the essential triggers are
+			// the prior commitment and pre-commitment outputs,
+			// which any future commitment must spend. Fee inputs
+			// also lack a known pkScript, which the notifier's
+			// spend registration requires.
+			continue
+		}
+
 		points = append(points, tapreorg.TriggerOutPoint{
-			OutPoint: txIn.PreviousOutPoint,
-			PkScript: scripts[txIn.PreviousOutPoint],
+			OutPoint:   txIn.PreviousOutPoint,
+			PkScript:   source.pkScript,
+			HeightHint: source.heightHint,
 		})
 	}
 	triggers, err := tapreorg.NewTriggerSet(points)

@@ -4,6 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/wire"
+	"github.com/lightninglabs/taproot-assets/tapsend"
+	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
+
 	"github.com/lightninglabs/taproot-assets/asset"
 	"github.com/lightninglabs/taproot-assets/internal/test"
 	"github.com/lightninglabs/taproot-assets/tapreorg"
@@ -148,12 +153,62 @@ func TestSupplyCommitBroadcastRestingTick(t *testing.T) {
 
 		// The cascade runs the full commitment cycle; on the
 		// anchoring path broadcast registers with the watcher
-		// instead of a conf subscription.
+		// instead of a conf subscription. The commitment fetch
+		// provides a real pre-commitment, and the funding mock
+		// preserves the transaction's essential inputs, so the
+		// registered trigger set is the one production would build.
 		h.expectTreeFetches()
-		h.expectCommitmentFetches()
+		preCommitTx := wire.NewMsgTx(2)
+		preCommitTx.AddTxOut(&wire.TxOut{
+			Value:    1_000,
+			PkScript: test.RandBytes(34),
+		})
+		preCommitKey, _ := test.RandKeyDesc(t)
+		preCommit := PreCommitment{
+			MintingTxn:  preCommitTx,
+			OutIdx:      0,
+			InternalKey: preCommitKey,
+			GroupPubKey: *randGroupKey,
+		}
+		h.mockCommits.On(
+			"UnspentPrecommits", mock.Anything, mock.Anything,
+			mock.Anything,
+		).Return(
+			lfn.Ok[PreCommits]([]PreCommitment{preCommit}),
+		).Once()
+		h.mockCommits.On(
+			"SupplyCommit", mock.Anything, mock.Anything,
+		).Return(
+			lfn.Ok(lfn.None[RootCommitment]()),
+		).Once()
 		h.expectKeyDerivationAndImport()
 		h.expectFeeEstimation()
-		h.expectPsbtFunding()
+
+		// Unlike the shared funding mock, preserve the packet's
+		// inputs and append a wallet fee input.
+		fundPsbtFunc := fundPsbtMockFn(func(
+			ctx context.Context, packet *psbt.Packet,
+			minConfs uint32, feeRate chainfee.SatPerKWeight,
+			changeIdx int32,
+		) (*tapsend.FundedPsbt, error) {
+
+			fundedTx := packet.UnsignedTx.Copy()
+			fundedTx.AddTxIn(
+				&wire.TxIn{
+					PreviousOutPoint: randOutPoint(h.t),
+				},
+			)
+
+			fundedPsbt, _ := psbt.NewFromUnsignedTx(fundedTx)
+			return &tapsend.FundedPsbt{
+				Pkt: fundedPsbt, ChangeOutputIndex: -1,
+			}, nil
+		})
+		h.mockWallet.On(
+			"FundPsbt", mock.Anything, mock.Anything,
+			mock.Anything, mock.Anything, mock.Anything,
+		).Return(fundPsbtFunc, nil).Once()
+
 		h.expectPsbtSigning()
 		h.expectInsertSignedCommitTx()
 		h.expectAssetLookup()
@@ -164,7 +219,18 @@ func TestSupplyCommitBroadcastRestingTick(t *testing.T) {
 		registrar.On("Anchorings", mock.Anything, SupplySiteID).
 			Return([]*tapreorg.Anchoring{}, nil).Once()
 		registrar.On(
-			"Register", mock.Anything, mock.Anything,
+			"Register", mock.Anything,
+			mock.MatchedBy(func(
+				spec tapreorg.RegistrationSpec) bool {
+
+				// The trigger set must be exactly the
+				// essential input: the pre-commitment
+				// outpoint, with its script — the wallet
+				// fee input is excluded.
+				pts := spec.Triggers.OutPoints()
+				return len(pts) == 1 &&
+					pts[0].OutPoint == preCommit.OutPoint()
+			}),
 			mock.Anything,
 		).Return(tapreorg.AnchoringID(1), nil).Once()
 
