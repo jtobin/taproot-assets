@@ -299,11 +299,23 @@ type MintOptions struct {
 	siblingFullTree *mintrpc.FinalizeBatchRequest_FullTree
 	feeRate         uint32
 	errText         string
+
+	// noUniverseLeafWait skips the wait for the minted assets'
+	// issuance leaves. Tests running at a burial depth deeper than
+	// the blocks they mine (the re-org tests) opt out, since the
+	// act-gated publication intentionally hasn't happened yet.
+	noUniverseLeafWait bool
 }
 
 func DefaultMintOptions() *MintOptions {
 	return &MintOptions{
 		mintingTimeout: defaultWaitTimeout,
+	}
+}
+
+func WithNoUniverseLeafWait() MintOption {
+	return func(options *MintOptions) {
+		options.noUniverseLeafWait = true
 	}
 }
 
@@ -598,7 +610,9 @@ func ConfirmBatch(t *testing.T, minerClient *miner.HarnessMiner,
 	// implying local universe visibility (and, through the augmenter,
 	// pending supply-commit updates), so wait for each minted asset's
 	// issuance leaf before returning.
-	WaitForMintUniverseLeaves(t, tapClient, mintedAssets)
+	if !options.noUniverseLeafWait {
+		WaitForMintUniverseLeaves(t, tapClient, mintedAssets)
+	}
 
 	return mintedAssets
 }
