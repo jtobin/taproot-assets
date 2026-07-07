@@ -247,7 +247,7 @@ func (c *Custodian) AnchoringSite() tapreorg.Site {
 //
 // Files whose trigger set cannot be derived (a single-proof genesis
 // file has no asset-bearing inputs) return ErrNoTriggers; callers
-// fall back to the legacy proof watcher for those.
+// surface the condition rather than silently dropping it.
 func (c *Custodian) RegisterReceiveAnchoring(ctx context.Context,
 	file *proof.File) error {
 
@@ -315,8 +315,10 @@ func (c *Custodian) RegisterReceiveAnchoring(ctx context.Context,
 }
 
 // ErrNoTriggers marks a proof file from which no asset-bearing
-// trigger set can be derived; such receives stay on the legacy proof
-// watcher.
+// trigger set can be derived (a single-proof genesis file has no
+// asset-bearing inputs). Callers surface the condition rather than
+// silently dropping it; a genesis-shaped trigger strategy is a
+// pending follow-up.
 var ErrNoTriggers = fmt.Errorf("no derivable trigger outpoints")
 
 // receiveTriggerPoints derives the anchoring's trigger set from a
