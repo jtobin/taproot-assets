@@ -1623,6 +1623,23 @@ func (w *Watcher) deliverOne(ctx context.Context, anchoring *Anchoring) {
 	}
 }
 
+// backoffFor computes the next-attempt backoff for the given attempt
+// count under the watcher's exponential-with-cap policy: the base
+// InitialDeliveryBackoff doubled once per prior attempt, capped at
+// MaxDeliveryBackoff. Attempts of 0 or 1 return the base backoff;
+// higher attempts double it until the cap is reached.
+func (w *Watcher) backoffFor(attempts uint32) time.Duration {
+	backoff := w.cfg.InitialDeliveryBackoff
+	for i := uint32(1); i < attempts && backoff < w.cfg.MaxDeliveryBackoff; i++ {
+		backoff *= 2
+	}
+	if backoff > w.cfg.MaxDeliveryBackoff {
+		backoff = w.cfg.MaxDeliveryBackoff
+	}
+
+	return backoff
+}
+
 // failDelivery records a failed delivery attempt with exponential
 // backoff, flagging the anchoring stuck once attempts pass the
 // threshold. Retries never stop; stuck is a visibility condition, not
@@ -1633,13 +1650,7 @@ func (w *Watcher) failDelivery(ctx context.Context, anchoring *Anchoring,
 	attempts := anchoring.DeliveryAttempts + 1
 	stuck := attempts >= w.cfg.StuckAfterAttempts
 
-	backoff := w.cfg.InitialDeliveryBackoff
-	for i := uint32(1); i < attempts && backoff < w.cfg.MaxDeliveryBackoff; i++ {
-		backoff *= 2
-	}
-	if backoff > w.cfg.MaxDeliveryBackoff {
-		backoff = w.cfg.MaxDeliveryBackoff
-	}
+	backoff := w.backoffFor(attempts)
 
 	log.Errorf("Anchoring %d (site=%v): delivery of %v failed "+
 		"(attempt %d, stuck=%v): %v", anchoring.ID, anchoring.Site,
@@ -1765,13 +1776,7 @@ func (w *Watcher) dispatchOne(ctx context.Context, effect *StoredEffect) {
 	}
 
 	attempts := effect.Attempts + 1
-	backoff := w.cfg.InitialDeliveryBackoff
-	for i := uint32(1); i < attempts && backoff < w.cfg.MaxDeliveryBackoff; i++ {
-		backoff *= 2
-	}
-	if backoff > w.cfg.MaxDeliveryBackoff {
-		backoff = w.cfg.MaxDeliveryBackoff
-	}
+	backoff := w.backoffFor(attempts)
 
 	log.Errorf("Effect %d (kind=%v): dispatch failed (attempt %d): %v",
 		effect.ID, effect.Effect.Kind, attempts, dispatchErr)
