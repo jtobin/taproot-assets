@@ -513,6 +513,10 @@ type Anchoring struct {
 	// continue at low frequency, and the condition is surfaced.
 	Stuck bool
 
+	// StuckReason is the last delivery error, surfaced once the
+	// anchoring is flagged stuck. Empty otherwise.
+	StuckReason string
+
 	// DeliveryAttempts counts failed delivery attempts since the
 	// last successful delivery.
 	DeliveryAttempts uint32

@@ -2175,7 +2175,7 @@ message Anchoring {
     uint32 created_height = 6;
 
     // Whether delivery has failed repeatedly; retries continue
-    // regardless.
+    // regardless. The stuck_reason field carries the last error.
     bool stuck = 7;
 
     // Failed delivery attempts since the last successful delivery.
@@ -2200,4 +2200,8 @@ message Anchoring {
     // The unix time the terminal phase was delivered; zero while
     // live.
     int64 terminal_at = 14;
+
+    // The last delivery error, surfaced once the anchoring is flagged
+    // stuck. Empty when the anchoring is not stuck.
+    string stuck_reason = 15;
 }

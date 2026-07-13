@@ -217,6 +217,11 @@
   anchorings by site and phase, plus stuck and lagging deliveries
   counted over live and terminal anchorings alike.
 
+* The `Anchoring` message of `ListAnchorings` gains a `stuck_reason`
+  field carrying the last delivery error once the anchoring is
+  flagged stuck, so an operator can see why delivery keeps failing
+  without reading the daemon's log.
+
 ## tapcli Additions
 
 # Improvements

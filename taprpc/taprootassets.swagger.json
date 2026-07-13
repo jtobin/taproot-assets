@@ -1803,7 +1803,7 @@
         },
         "stuck": {
           "type": "boolean",
-          "description": "Whether delivery has failed repeatedly; retries continue\nregardless."
+          "description": "Whether delivery has failed repeatedly; retries continue\nregardless. The stuck_reason field carries the last error."
         },
         "delivery_attempts": {
           "type": "integer",
@@ -1836,6 +1836,10 @@
           "type": "string",
           "format": "int64",
           "description": "The unix time the terminal phase was delivered; zero while\nlive."
+        },
+        "stuck_reason": {
+          "type": "string",
+          "description": "The last delivery error, surfaced once the anchoring is flagged\nstuck. Empty when the anchoring is not stuck."
         }
       }
     },

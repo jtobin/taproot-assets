@@ -1563,6 +1563,14 @@ func assembleAnchoring(ctx context.Context, q *sqlc.Queries,
 		return nil, err
 	}
 
+	// The error column also holds transient text while delivery
+	// retries below the stuck threshold; it only surfaces as the
+	// stuck reason once the flag is set.
+	var stuckReason string
+	if row.Stuck {
+		stuckReason = row.LastDeliveryError.String
+	}
+
 	return &tapreorg.Anchoring{
 		ID:        tapreorg.AnchoringID(row.ID),
 		Site:      tapreorg.SiteID(row.SiteID),
@@ -1581,6 +1589,7 @@ func assembleAnchoring(ctx context.Context, q *sqlc.Queries,
 		Phase:            phase,
 		DeliveredPhase:   delivered,
 		Stuck:            row.Stuck,
+		StuckReason:      stuckReason,
 		DeliveryAttempts: uint32(row.DeliveryAttempts),
 		Spends:           view.Spends,
 	}, nil

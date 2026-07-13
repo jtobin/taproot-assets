@@ -7637,7 +7637,7 @@ type Anchoring struct {
 	// The best height at registration time.
 	CreatedHeight uint32 `protobuf:"varint,6,opt,name=created_height,json=createdHeight,proto3" json:"created_height,omitempty"`
 	// Whether delivery has failed repeatedly; retries continue
-	// regardless.
+	// regardless. The stuck_reason field carries the last error.
 	Stuck bool `protobuf:"varint,7,opt,name=stuck,proto3" json:"stuck,omitempty"`
 	// Failed delivery attempts since the last successful delivery.
 	DeliveryAttempts uint32 `protobuf:"varint,8,opt,name=delivery_attempts,json=deliveryAttempts,proto3" json:"delivery_attempts,omitempty"`
@@ -7654,7 +7654,10 @@ type Anchoring struct {
 	LastDeliveryError string `protobuf:"bytes,13,opt,name=last_delivery_error,json=lastDeliveryError,proto3" json:"last_delivery_error,omitempty"`
 	// The unix time the terminal phase was delivered; zero while
 	// live.
-	TerminalAt    int64 `protobuf:"varint,14,opt,name=terminal_at,json=terminalAt,proto3" json:"terminal_at,omitempty"`
+	TerminalAt int64 `protobuf:"varint,14,opt,name=terminal_at,json=terminalAt,proto3" json:"terminal_at,omitempty"`
+	// The last delivery error, surfaced once the anchoring is flagged
+	// stuck. Empty when the anchoring is not stuck.
+	StuckReason   string `protobuf:"bytes,15,opt,name=stuck_reason,json=stuckReason,proto3" json:"stuck_reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7785,6 +7788,13 @@ func (x *Anchoring) GetTerminalAt() int64 {
 		return x.TerminalAt
 	}
 	return 0
+}
+
+func (x *Anchoring) GetStuckReason() string {
+	if x != nil {
+		return x.StuckReason
+	}
+	return ""
 }
 
 var File_taprootassets_proto protoreflect.FileDescriptor
@@ -8323,7 +8333,7 @@ const file_taprootassets_proto_rawDesc = "" +
 	"\x16ListAnchoringsResponse\x121\n" +
 	"\n" +
 	"anchorings\x18\x01 \x03(\v2\x11.taprpc.AnchoringR\n" +
-	"anchorings\"\xea\x03\n" +
+	"anchorings\"\x8d\x04\n" +
 	"\tAnchoring\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04site\x18\x02 \x01(\tR\x04site\x12\x14\n" +
@@ -8340,7 +8350,8 @@ const file_taprootassets_proto_rawDesc = "" +
 	"\x16delivered_phase_detail\x18\f \x01(\tR\x14deliveredPhaseDetail\x12.\n" +
 	"\x13last_delivery_error\x18\r \x01(\tR\x11lastDeliveryError\x12\x1f\n" +
 	"\vterminal_at\x18\x0e \x01(\x03R\n" +
-	"terminalAt*(\n" +
+	"terminalAt\x12!\n" +
+	"\fstuck_reason\x18\x0f \x01(\tR\vstuckReason*(\n" +
 	"\tAssetType\x12\n" +
 	"\n" +
 	"\x06NORMAL\x10\x00\x12\x0f\n" +

@@ -1904,6 +1904,14 @@ func (r *RPCServer) ListAnchorings(ctx context.Context,
 // the request's phase filter takes — with the evidence renderings in
 // the detail fields alongside.
 func marshalAnchoring(summary tapdb.AnchoringSummary) *taprpc.Anchoring {
+	// The error column also holds transient text while delivery
+	// retries below the stuck threshold; it surfaces as the stuck
+	// reason only once the flag is set.
+	var stuckReason string
+	if summary.Stuck {
+		stuckReason = summary.LastDeliveryError
+	}
+
 	return &taprpc.Anchoring{
 		Id:                   int64(summary.ID),
 		Site:                 string(summary.Site),
@@ -1914,6 +1922,7 @@ func marshalAnchoring(summary tapdb.AnchoringSummary) *taprpc.Anchoring {
 		Threshold:            summary.Threshold,
 		CreatedHeight:        summary.CreatedHeight,
 		Stuck:                summary.Stuck,
+		StuckReason:          stuckReason,
 		DeliveryAttempts:     summary.DeliveryAttempts,
 		WitnessTxid:          summary.WitnessTxid,
 		NumCandidates:        summary.NumCandidates,
