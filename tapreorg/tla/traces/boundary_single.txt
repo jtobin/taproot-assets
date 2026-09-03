@@ -1,0 +1,56 @@
+Error: Invariant CertifiedOnChain is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 1
+/\ maxLen = 0
+/\ pending = {}
+/\ chain = <<>>
+
+State 2: <Extend line 151, col 5 to line 157, col 58 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 2
+/\ maxLen = 1
+/\ pending = {}
+/\ chain = <<[tx |-> "s2", id |-> 1]>>
+
+State 3: <Extend line 151, col 5 to line 157, col 58 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 3
+/\ maxLen = 2
+/\ pending = {}
+/\ chain = <<[tx |-> "s2", id |-> 1], [tx |-> "none", id |-> 2]>>
+
+State 4: <EmitActTx line 196, col 5 to line 203, col 31 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 3
+/\ maxLen = 2
+/\ pending = {[h |-> 1, b |-> 1, tx |-> "s2", k |-> "act"]}
+/\ chain = <<[tx |-> "s2", id |-> 1], [tx |-> "none", id |-> 2]>>
+
+State 5: <ProcessActTx line 261, col 5 to line 271, col 65 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = [s2 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> TRUE]]
+/\ nextId = 3
+/\ maxLen = 2
+/\ pending = {}
+/\ chain = <<[tx |-> "s2", id |-> 1], [tx |-> "none", id |-> 2]>>
+
+State 6: <Reorg line 164, col 5 to line 168, col 35 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = [s2 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> TRUE]]
+/\ nextId = 3
+/\ maxLen = 2
+/\ pending = {}
+/\ chain = <<>>
+

@@ -1,0 +1,83 @@
+Error: Invariant BuggyNoFalseBurial is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 1
+/\ maxLen = 0
+/\ pending = {}
+/\ chain = <<>>
+
+State 2: <Extend line 151, col 5 to line 157, col 58 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 2
+/\ maxLen = 1
+/\ pending = {}
+/\ chain = <<[tx |-> "s2", id |-> 1]>>
+
+State 3: <EmitConfTx line 182, col 5 to line 188, col 31 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 2
+/\ maxLen = 1
+/\ pending = {[h |-> 1, b |-> 1, tx |-> "s2", k |-> "conf"]}
+/\ chain = <<[tx |-> "s2", id |-> 1]>>
+
+State 4: <ProcessConfTx line 241, col 5 to line 253, col 65 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = [s2 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> FALSE]]
+/\ nextId = 2
+/\ maxLen = 1
+/\ pending = {}
+/\ chain = <<[tx |-> "s2", id |-> 1]>>
+
+State 5: <Reorg line 164, col 5 to line 168, col 35 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = [s2 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> FALSE]]
+/\ nextId = 2
+/\ maxLen = 1
+/\ pending = {}
+/\ chain = <<>>
+
+State 6: <Extend line 151, col 5 to line 157, col 58 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = [s2 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> FALSE]]
+/\ nextId = 3
+/\ maxLen = 1
+/\ pending = {}
+/\ chain = <<[tx |-> "none", id |-> 2]>>
+
+State 7: <Extend line 151, col 5 to line 157, col 58 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = [s2 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> FALSE]]
+/\ nextId = 4
+/\ maxLen = 2
+/\ pending = {}
+/\ chain = <<[tx |-> "none", id |-> 2], [tx |-> "none", id |-> 3]>>
+
+State 8: <EmitEpoch line 220, col 5 to line 223, col 31 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = [s2 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> FALSE]]
+/\ nextId = 4
+/\ maxLen = 2
+/\ pending = {[k |-> "epoch", n |-> 2]}
+/\ chain = <<[tx |-> "none", id |-> 2], [tx |-> "none", id |-> 3]>>
+
+State 9: <ProcessEpoch line 293, col 5 to line 298, col 60 of module AnchoringWatcher>
+/\ seenHeight = 2
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = [s2 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> FALSE]]
+/\ nextId = 4
+/\ maxLen = 2
+/\ pending = {}
+/\ chain = <<[tx |-> "none", id |-> 2], [tx |-> "none", id |-> 3]>>
+
