@@ -1,0 +1,95 @@
+Error: Invariant NeverDoubleRelease is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ delivered = [A1 |-> [tag |-> "unwitnessed"], A2 |-> [tag |-> "unwitnessed"]]
+/\ cands = [A1 |-> << >>, A2 |-> << >>]
+/\ nextId = 1
+/\ maxLen = 0
+/\ outbox = {}
+/\ pending = {}
+/\ fc = << >>
+/\ chain = <<>>
+/\ performed = {}
+
+State 2: <Extend line 143, col 5 to line 150, col 28 of module AnchoringFleet>
+/\ delivered = [A1 |-> [tag |-> "unwitnessed"], A2 |-> [tag |-> "unwitnessed"]]
+/\ cands = [A1 |-> << >>, A2 |-> << >>]
+/\ nextId = 2
+/\ maxLen = 1
+/\ outbox = {}
+/\ pending = {}
+/\ fc = << >>
+/\ chain = <<[tx |-> "s1", id |-> 1]>>
+/\ performed = {}
+
+State 3: <Extend line 143, col 5 to line 150, col 28 of module AnchoringFleet>
+/\ delivered = [A1 |-> [tag |-> "unwitnessed"], A2 |-> [tag |-> "unwitnessed"]]
+/\ cands = [A1 |-> << >>, A2 |-> << >>]
+/\ nextId = 3
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {}
+/\ fc = << >>
+/\ chain = <<[tx |-> "s1", id |-> 1], [tx |-> "none", id |-> 2]>>
+/\ performed = {}
+
+State 4: <EmitAct line 175, col 5 to line 183, col 38 of module AnchoringFleet>
+/\ delivered = [A1 |-> [tag |-> "unwitnessed"], A2 |-> [tag |-> "unwitnessed"]]
+/\ cands = [A1 |-> << >>, A2 |-> << >>]
+/\ nextId = 3
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {[k |-> "act", tx |-> "s1", h |-> 1, b |-> 1]}
+/\ fc = << >>
+/\ chain = <<[tx |-> "s1", id |-> 1], [tx |-> "none", id |-> 2]>>
+/\ performed = {}
+
+State 5: <ProcessAct line 237, col 5 to line 249, col 42 of module AnchoringFleet>
+/\ delivered = [A1 |-> [tag |-> "unwitnessed"], A2 |-> [tag |-> "unwitnessed"]]
+/\ cands = [A1 |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> TRUE]], A2 |-> << >>]
+/\ nextId = 3
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {[k |-> "act", tx |-> "s1", h |-> 1, b |-> 1]}
+/\ fc = << >>
+/\ chain = <<[tx |-> "s1", id |-> 1], [tx |-> "none", id |-> 2]>>
+/\ performed = {}
+
+State 6: <ProcessAct line 237, col 5 to line 249, col 42 of module AnchoringFleet>
+/\ delivered = [A1 |-> [tag |-> "unwitnessed"], A2 |-> [tag |-> "unwitnessed"]]
+/\ cands = [ A1 |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> TRUE]],
+  A2 |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> TRUE]] ]
+/\ nextId = 3
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {}
+/\ fc = << >>
+/\ chain = <<[tx |-> "s1", id |-> 1], [tx |-> "none", id |-> 2]>>
+/\ performed = {}
+
+State 7: <DeliverA line 324, col 5 to line 337, col 28 of module AnchoringFleet>
+/\ delivered = [ A1 |-> [tag |-> "buried", tx |-> "s1", h |-> 1, b |-> 1],
+  A2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [ A1 |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> TRUE]],
+  A2 |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> TRUE]] ]
+/\ nextId = 3
+/\ maxLen = 2
+/\ outbox = {[k |-> "release", a |-> "A1"]}
+/\ pending = {}
+/\ fc = << >>
+/\ chain = <<[tx |-> "s1", id |-> 1], [tx |-> "none", id |-> 2]>>
+/\ performed = {}
+
+State 8: <DeliverA line 324, col 5 to line 337, col 28 of module AnchoringFleet>
+/\ delivered = [ A1 |-> [tag |-> "buried", tx |-> "s1", h |-> 1, b |-> 1],
+  A2 |-> [tag |-> "buried", tx |-> "s1", h |-> 1, b |-> 1] ]
+/\ cands = [ A1 |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> TRUE]],
+  A2 |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> TRUE]] ]
+/\ nextId = 3
+/\ maxLen = 2
+/\ outbox = {[k |-> "release", a |-> "A1"], [k |-> "release", a |-> "A2"]}
+/\ pending = {}
+/\ fc = << >>
+/\ chain = <<[tx |-> "s1", id |-> 1], [tx |-> "none", id |-> 2]>>
+/\ performed = {}
+

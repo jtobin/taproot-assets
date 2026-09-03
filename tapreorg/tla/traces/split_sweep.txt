@@ -1,0 +1,67 @@
+Error: Invariant NeverSplitForeclosure is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 1
+/\ maxLen = 0
+/\ pending = {}
+/\ chain = <<>>
+
+State 2: <Extend line 151, col 5 to line 157, col 58 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 2
+/\ maxLen = 1
+/\ pending = {}
+/\ chain = <<[tx |-> "f1", id |-> 1]>>
+
+State 3: <Extend line 151, col 5 to line 157, col 58 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 3
+/\ maxLen = 2
+/\ pending = {}
+/\ chain = <<[tx |-> "f1", id |-> 1], [tx |-> "f2", id |-> 2]>>
+
+State 4: <EmitConfTx line 182, col 5 to line 188, col 31 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 3
+/\ maxLen = 2
+/\ pending = {[h |-> 2, b |-> 2, tx |-> "f2", k |-> "conf"]}
+/\ chain = <<[tx |-> "f1", id |-> 1], [tx |-> "f2", id |-> 2]>>
+
+State 5: <EmitActTx line 196, col 5 to line 203, col 31 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 3
+/\ maxLen = 2
+/\ pending = { [h |-> 1, b |-> 1, tx |-> "f1", k |-> "act"],
+  [h |-> 2, b |-> 2, tx |-> "f2", k |-> "conf"] }
+/\ chain = <<[tx |-> "f1", id |-> 1], [tx |-> "f2", id |-> 2]>>
+
+State 6: <ProcessConfTx line 241, col 5 to line 253, col 65 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = [f2 |-> [on |-> TRUE, h |-> 2, b |-> 2, cert |-> FALSE]]
+/\ nextId = 3
+/\ maxLen = 2
+/\ pending = {[h |-> 1, b |-> 1, tx |-> "f1", k |-> "act"]}
+/\ chain = <<[tx |-> "f1", id |-> 1], [tx |-> "f2", id |-> 2]>>
+
+State 7: <ProcessActTx line 261, col 5 to line 271, col 65 of module AnchoringWatcher>
+/\ seenHeight = 0
+/\ delivered = [tag |-> "unwitnessed"]
+/\ cands = [ f1 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> TRUE],
+  f2 |-> [on |-> TRUE, h |-> 2, b |-> 2, cert |-> FALSE] ]
+/\ nextId = 3
+/\ maxLen = 2
+/\ pending = {}
+/\ chain = <<[tx |-> "f1", id |-> 1], [tx |-> "f2", id |-> 2]>>
+

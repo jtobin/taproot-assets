@@ -1,0 +1,308 @@
+Error: Action property NeverMixedSettlement is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ delivered = [ P |-> [tag |-> "unwitnessed"],
+  C1 |-> [tag |-> "unwitnessed"],
+  C2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [P |-> << >>, C1 |-> << >>, C2 |-> << >>]
+/\ nextId = 1
+/\ maxLen = 0
+/\ outbox = {}
+/\ pending = {}
+/\ fc = ( [child |-> "C1", parent |-> "P", form |-> "s1"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] @@
+  [child |-> "C2", parent |-> "P", form |-> "s2"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] )
+/\ chain = <<>>
+/\ performed = {}
+
+State 2: <Extend line 149, col 5 to line 156, col 28 of module AnchoringFleet>
+/\ delivered = [ P |-> [tag |-> "unwitnessed"],
+  C1 |-> [tag |-> "unwitnessed"],
+  C2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [P |-> << >>, C1 |-> << >>, C2 |-> << >>]
+/\ nextId = 2
+/\ maxLen = 1
+/\ outbox = {}
+/\ pending = {}
+/\ fc = ( [child |-> "C1", parent |-> "P", form |-> "s1"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] @@
+  [child |-> "C2", parent |-> "P", form |-> "s2"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] )
+/\ chain = <<[tx |-> "s1", id |-> 1]>>
+/\ performed = {}
+
+State 3: <EmitConf line 171, col 5 to line 178, col 38 of module AnchoringFleet>
+/\ delivered = [ P |-> [tag |-> "unwitnessed"],
+  C1 |-> [tag |-> "unwitnessed"],
+  C2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [P |-> << >>, C1 |-> << >>, C2 |-> << >>]
+/\ nextId = 2
+/\ maxLen = 1
+/\ outbox = {}
+/\ pending = {[tx |-> "s1", k |-> "conf", h |-> 1, b |-> 1]}
+/\ fc = ( [child |-> "C1", parent |-> "P", form |-> "s1"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] @@
+  [child |-> "C2", parent |-> "P", form |-> "s2"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] )
+/\ chain = <<[tx |-> "s1", id |-> 1]>>
+/\ performed = {}
+
+State 4: <ProcessConf line 226, col 5 to line 240, col 42 of module AnchoringFleet>
+/\ delivered = [ P |-> [tag |-> "unwitnessed"],
+  C1 |-> [tag |-> "unwitnessed"],
+  C2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [ P |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> FALSE]],
+  C1 |-> << >>,
+  C2 |-> << >> ]
+/\ nextId = 2
+/\ maxLen = 1
+/\ outbox = {}
+/\ pending = {}
+/\ fc = ( [child |-> "C1", parent |-> "P", form |-> "s1"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] @@
+  [child |-> "C2", parent |-> "P", form |-> "s2"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] )
+/\ chain = <<[tx |-> "s1", id |-> 1]>>
+/\ performed = {}
+
+State 5: <Reorg line 159, col 5 to line 163, col 51 of module AnchoringFleet>
+/\ delivered = [ P |-> [tag |-> "unwitnessed"],
+  C1 |-> [tag |-> "unwitnessed"],
+  C2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [ P |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> FALSE]],
+  C1 |-> << >>,
+  C2 |-> << >> ]
+/\ nextId = 2
+/\ maxLen = 1
+/\ outbox = {}
+/\ pending = {}
+/\ fc = ( [child |-> "C1", parent |-> "P", form |-> "s1"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] @@
+  [child |-> "C2", parent |-> "P", form |-> "s2"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] )
+/\ chain = <<>>
+/\ performed = {}
+
+State 6: <Extend line 149, col 5 to line 156, col 28 of module AnchoringFleet>
+/\ delivered = [ P |-> [tag |-> "unwitnessed"],
+  C1 |-> [tag |-> "unwitnessed"],
+  C2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [ P |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> FALSE]],
+  C1 |-> << >>,
+  C2 |-> << >> ]
+/\ nextId = 3
+/\ maxLen = 1
+/\ outbox = {}
+/\ pending = {}
+/\ fc = ( [child |-> "C1", parent |-> "P", form |-> "s1"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] @@
+  [child |-> "C2", parent |-> "P", form |-> "s2"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] )
+/\ chain = <<[tx |-> "s2", id |-> 2]>>
+/\ performed = {}
+
+State 7: <Extend line 149, col 5 to line 156, col 28 of module AnchoringFleet>
+/\ delivered = [ P |-> [tag |-> "unwitnessed"],
+  C1 |-> [tag |-> "unwitnessed"],
+  C2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [ P |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> FALSE]],
+  C1 |-> << >>,
+  C2 |-> << >> ]
+/\ nextId = 4
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {}
+/\ fc = ( [child |-> "C1", parent |-> "P", form |-> "s1"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] @@
+  [child |-> "C2", parent |-> "P", form |-> "s2"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] )
+/\ chain = <<[tx |-> "s2", id |-> 2], [tx |-> "none", id |-> 3]>>
+/\ performed = {}
+
+State 8: <EmitAct line 181, col 5 to line 189, col 38 of module AnchoringFleet>
+/\ delivered = [ P |-> [tag |-> "unwitnessed"],
+  C1 |-> [tag |-> "unwitnessed"],
+  C2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [ P |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> FALSE]],
+  C1 |-> << >>,
+  C2 |-> << >> ]
+/\ nextId = 4
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {[tx |-> "s2", k |-> "act", h |-> 1, b |-> 2]}
+/\ fc = ( [child |-> "C1", parent |-> "P", form |-> "s1"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] @@
+  [child |-> "C2", parent |-> "P", form |-> "s2"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] )
+/\ chain = <<[tx |-> "s2", id |-> 2], [tx |-> "none", id |-> 3]>>
+/\ performed = {}
+
+State 9: <Restage line 300, col 9 to line 312, col 51 of module AnchoringFleet>
+/\ delivered = [ P |-> [tag |-> "unwitnessed"],
+  C1 |-> [tag |-> "unwitnessed"],
+  C2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [ P |-> [s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> FALSE]],
+  C1 |-> << >>,
+  C2 |-> << >> ]
+/\ nextId = 4
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {[tx |-> "s2", k |-> "act", h |-> 1, b |-> 2]}
+/\ fc = ( [child |-> "C1", parent |-> "P", form |-> "s1"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] @@
+  [child |-> "C2", parent |-> "P", form |-> "s2"] :>
+      [ tx |-> "s1",
+        staged |-> TRUE,
+        h |-> 1,
+        b |-> 1,
+        on |-> TRUE,
+        cert |-> FALSE ] )
+/\ chain = <<[tx |-> "s2", id |-> 2], [tx |-> "none", id |-> 3]>>
+/\ performed = {}
+
+State 10: <ProcessAct line 243, col 5 to line 255, col 42 of module AnchoringFleet>
+/\ delivered = [ P |-> [tag |-> "unwitnessed"],
+  C1 |-> [tag |-> "unwitnessed"],
+  C2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [ P |->
+      [ s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> FALSE],
+        s2 |-> [h |-> 1, b |-> 2, on |-> TRUE, cert |-> TRUE] ],
+  C1 |-> << >>,
+  C2 |-> << >> ]
+/\ nextId = 4
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {}
+/\ fc = ( [child |-> "C1", parent |-> "P", form |-> "s1"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] @@
+  [child |-> "C2", parent |-> "P", form |-> "s2"] :>
+      [ tx |-> "s1",
+        staged |-> TRUE,
+        h |-> 1,
+        b |-> 1,
+        on |-> TRUE,
+        cert |-> FALSE ] )
+/\ chain = <<[tx |-> "s2", id |-> 2], [tx |-> "none", id |-> 3]>>
+/\ performed = {}
+
+State 11: <DeliverA line 330, col 5 to line 343, col 28 of module AnchoringFleet>
+/\ delivered = [ P |-> [tag |-> "buried", tx |-> "s2", h |-> 1, b |-> 2],
+  C1 |-> [tag |-> "unwitnessed"],
+  C2 |-> [tag |-> "unwitnessed"] ]
+/\ cands = [ P |->
+      [ s1 |-> [h |-> 1, b |-> 1, on |-> TRUE, cert |-> FALSE],
+        s2 |-> [h |-> 1, b |-> 2, on |-> TRUE, cert |-> TRUE] ],
+  C1 |-> << >>,
+  C2 |-> << >> ]
+/\ nextId = 4
+/\ maxLen = 2
+/\ outbox = {[k |-> "release", a |-> "P"]}
+/\ pending = {}
+/\ fc = ( [child |-> "C1", parent |-> "P", form |-> "s1"] :>
+      [ tx |-> "s2",
+        staged |-> TRUE,
+        h |-> 1,
+        b |-> 2,
+        on |-> TRUE,
+        cert |-> FALSE ] @@
+  [child |-> "C2", parent |-> "P", form |-> "s2"] :>
+      [ tx |-> "none",
+        staged |-> FALSE,
+        h |-> 1,
+        b |-> 1,
+        on |-> FALSE,
+        cert |-> FALSE ] )
+/\ chain = <<[tx |-> "s2", id |-> 2], [tx |-> "none", id |-> 3]>>
+/\ performed = {}
+
