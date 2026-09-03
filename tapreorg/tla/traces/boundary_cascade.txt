@@ -1,0 +1,167 @@
+Error: Invariant CascadeExclusive is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ deliveredC = [tag |-> "unwitnessed"]
+/\ deliveredP = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 1
+/\ maxLen = 0
+/\ outbox = {}
+/\ pending = {}
+/\ fc = [ staged |-> FALSE,
+  on |-> FALSE,
+  tx |-> "none",
+  h |-> 1,
+  b |-> 1,
+  cert |-> FALSE ]
+/\ chain = <<>>
+/\ performed = {}
+
+State 2: <Extend line 177, col 5 to line 184, col 39 of module AnchoringCascade>
+/\ deliveredC = [tag |-> "unwitnessed"]
+/\ deliveredP = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 2
+/\ maxLen = 1
+/\ outbox = {}
+/\ pending = {}
+/\ fc = [ staged |-> FALSE,
+  on |-> FALSE,
+  tx |-> "none",
+  h |-> 1,
+  b |-> 1,
+  cert |-> FALSE ]
+/\ chain = <<[tx |-> "s1", id |-> 1]>>
+/\ performed = {}
+
+State 3: <Extend line 177, col 5 to line 184, col 39 of module AnchoringCascade>
+/\ deliveredC = [tag |-> "unwitnessed"]
+/\ deliveredP = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 3
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {}
+/\ fc = [ staged |-> FALSE,
+  on |-> FALSE,
+  tx |-> "none",
+  h |-> 1,
+  b |-> 1,
+  cert |-> FALSE ]
+/\ chain = <<[tx |-> "s1", id |-> 1], [tx |-> "none", id |-> 2]>>
+/\ performed = {}
+
+State 4: <EmitActTx line 213, col 5 to line 221, col 50 of module AnchoringCascade>
+/\ deliveredC = [tag |-> "unwitnessed"]
+/\ deliveredP = [tag |-> "unwitnessed"]
+/\ cands = << >>
+/\ nextId = 3
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {[tx |-> "s1", h |-> 1, b |-> 1, k |-> "act"]}
+/\ fc = [ staged |-> FALSE,
+  on |-> FALSE,
+  tx |-> "none",
+  h |-> 1,
+  b |-> 1,
+  cert |-> FALSE ]
+/\ chain = <<[tx |-> "s1", id |-> 1], [tx |-> "none", id |-> 2]>>
+/\ performed = {}
+
+State 5: <ProcessActTx line 282, col 5 to line 293, col 54 of module AnchoringCascade>
+/\ deliveredC = [tag |-> "unwitnessed"]
+/\ deliveredP = [tag |-> "unwitnessed"]
+/\ cands = [s1 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> TRUE]]
+/\ nextId = 3
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {}
+/\ fc = [ staged |-> FALSE,
+  on |-> FALSE,
+  tx |-> "none",
+  h |-> 1,
+  b |-> 1,
+  cert |-> FALSE ]
+/\ chain = <<[tx |-> "s1", id |-> 1], [tx |-> "none", id |-> 2]>>
+/\ performed = {}
+
+State 6: <Reorg line 187, col 5 to line 191, col 63 of module AnchoringCascade>
+/\ deliveredC = [tag |-> "unwitnessed"]
+/\ deliveredP = [tag |-> "unwitnessed"]
+/\ cands = [s1 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> TRUE]]
+/\ nextId = 3
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {}
+/\ fc = [ staged |-> FALSE,
+  on |-> FALSE,
+  tx |-> "none",
+  h |-> 1,
+  b |-> 1,
+  cert |-> FALSE ]
+/\ chain = <<>>
+/\ performed = {}
+
+State 7: <Extend line 177, col 5 to line 184, col 39 of module AnchoringCascade>
+/\ deliveredC = [tag |-> "unwitnessed"]
+/\ deliveredP = [tag |-> "unwitnessed"]
+/\ cands = [s1 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> TRUE]]
+/\ nextId = 4
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {}
+/\ fc = [ staged |-> FALSE,
+  on |-> FALSE,
+  tx |-> "none",
+  h |-> 1,
+  b |-> 1,
+  cert |-> FALSE ]
+/\ chain = <<[tx |-> "s2", id |-> 3]>>
+/\ performed = {}
+
+State 8: <Extend line 177, col 5 to line 184, col 39 of module AnchoringCascade>
+/\ deliveredC = [tag |-> "unwitnessed"]
+/\ deliveredP = [tag |-> "unwitnessed"]
+/\ cands = [s1 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> TRUE]]
+/\ nextId = 5
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {}
+/\ fc = [ staged |-> FALSE,
+  on |-> FALSE,
+  tx |-> "none",
+  h |-> 1,
+  b |-> 1,
+  cert |-> FALSE ]
+/\ chain = <<[tx |-> "s2", id |-> 3], [tx |-> "none", id |-> 4]>>
+/\ performed = {}
+
+State 9: <EmitFcActTx line 243, col 5 to line 250, col 50 of module AnchoringCascade>
+/\ deliveredC = [tag |-> "unwitnessed"]
+/\ deliveredP = [tag |-> "unwitnessed"]
+/\ cands = [s1 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> TRUE]]
+/\ nextId = 5
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {[tx |-> "s2", h |-> 1, b |-> 3, k |-> "fcact"]}
+/\ fc = [ staged |-> FALSE,
+  on |-> FALSE,
+  tx |-> "none",
+  h |-> 1,
+  b |-> 1,
+  cert |-> FALSE ]
+/\ chain = <<[tx |-> "s2", id |-> 3], [tx |-> "none", id |-> 4]>>
+/\ performed = {}
+
+State 10: <ProcessFcActTx line 317, col 5 to line 326, col 54 of module AnchoringCascade>
+/\ deliveredC = [tag |-> "unwitnessed"]
+/\ deliveredP = [tag |-> "unwitnessed"]
+/\ cands = [s1 |-> [on |-> TRUE, h |-> 1, b |-> 1, cert |-> TRUE]]
+/\ nextId = 5
+/\ maxLen = 2
+/\ outbox = {}
+/\ pending = {}
+/\ fc = [staged |-> TRUE, on |-> TRUE, tx |-> "s2", h |-> 1, b |-> 3, cert |-> TRUE]
+/\ chain = <<[tx |-> "s2", id |-> 3], [tx |-> "none", id |-> 4]>>
+/\ performed = {}
+
