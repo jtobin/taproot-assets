@@ -412,6 +412,20 @@ type RegistrationSpec struct {
 	Phase1OnAttach bool
 }
 
+// AnchorNeedsProtection reports whether a confirmation is still shallower
+// than the site's act threshold at the given best height. Unknown policy or
+// location data is treated conservatively: it still needs protection.
+func AnchorNeedsProtection(bestHeight, blockHeight, threshold uint32) bool {
+	if threshold == 0 || blockHeight == 0 || blockHeight > bestHeight {
+		return true
+	}
+
+	// Subtract before adding one so heights near MaxUint32 cannot overflow.
+	depth := bestHeight - blockHeight + 1
+
+	return depth < threshold
+}
+
 // Validate checks the spec's value-level invariants.
 func (s *RegistrationSpec) Validate() error {
 	if s.Site == "" {

@@ -213,6 +213,11 @@ type ActiveAssetsStore interface {
 	// operations.
 	AssetProofStore
 
+	// InsertReorgEffect records durable proof-mirror work for safe receives
+	// imported without an anchoring registration.
+	InsertReorgEffect(ctx context.Context,
+		arg sqlc.InsertReorgEffectParams) (int64, error)
+
 	// TransferOutputAssetID returns the asset row a transfer output
 	// materialized into, if any.
 	TransferOutputAssetID(ctx context.Context,

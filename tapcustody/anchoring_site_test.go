@@ -184,13 +184,10 @@ func TestTipSeedCandidateFromFile(t *testing.T) {
 	require.Equal(t, original.Bytes(), recovered.Bytes())
 }
 
-// TestRegisterReceiveAnchoringSeedsTip asserts that a file with
-// derivable triggers registers on both: the trigger set the sensor
-// watches for foreign spenders, and the tip's own confirmation as the
-// seed the anchoring is born delivered on. A second registration for
-// the same anchor tx (another output of the same send) attaches to
-// that anchoring, whose delivered phase is the seed's Witnessed.
-func TestRegisterReceiveAnchoringSeedsTip(t *testing.T) {
+// TestRegisterReceiveAnchoringSeedsWholeDAG asserts that each young anchor in
+// a proof DAG is registered and seeded, while repeat registration remains
+// idempotent per transaction.
+func TestRegisterReceiveAnchoringSeedsWholeDAG(t *testing.T) {
 	t.Parallel()
 
 	registrar := tapreorg.NewMockRegistrar()
@@ -223,9 +220,14 @@ func TestRegisterReceiveAnchoringSeedsTip(t *testing.T) {
 
 	anchorings, err := registrar.AllAnchorings(ctx, ReceiveSiteID)
 	require.NoError(t, err)
-	require.Len(t, anchorings, 1)
+	require.Len(t, anchorings, 2)
 
-	anchoring := anchorings[0]
+	anchorTxID := anchorTx.TxHash()
+	anchoring, err := registrar.LookupByMatchKey(
+		ctx, ReceiveSiteID, anchorTxID.CloneBytes(),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, anchoring)
 	require.Equal(t, 1, anchoring.Triggers.Len())
 	require.Len(t, anchoring.Spends, 1)
 	require.Equal(t, anchorTx.TxHash(), anchoring.Spends[0].W.TxHash())
@@ -233,6 +235,96 @@ func TestRegisterReceiveAnchoringSeedsTip(t *testing.T) {
 	require.False(t, anchoring.Spends[0].ActCertified)
 	require.IsType(t, tapreorg.Witnessed{}, anchoring.Phase)
 	require.IsType(t, tapreorg.Witnessed{}, anchoring.DeliveredPhase)
+}
+
+// TestReceiveRegistrationSpecsYoungFrontier pins the bounded frontier: all
+// young transactions are covered, safe history is omitted, and repeated proof
+// positions do not create positional watcher identities.
+func TestReceiveRegistrationSpecsYoungFrontier(t *testing.T) {
+	t.Parallel()
+
+	inputTx := wire.NewMsgTx(2)
+	inputTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{}, nil, nil))
+	inputTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0x20}))
+
+	anchorTx := wire.NewMsgTx(2)
+	anchorTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{
+		Hash: inputTx.TxHash(), Index: 0,
+	}, nil, nil))
+	anchorTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xaa}))
+
+	file := trimmedTransferFile(t, anchorTx, inputTx)
+	inputTxID := inputTx.TxHash()
+	anchorTxID := anchorTx.TxHash()
+
+	// At height 692 the dependency at 690 is three confirmations deep,
+	// while the synthetic tip at 700 is conservatively young too.
+	specs, err := receiveRegistrationSpecs(file, 6, 692)
+	require.NoError(t, err)
+	require.Len(t, specs, 2)
+	require.Equal(t, inputTxID.CloneBytes(), specs[0].MatchKey)
+	require.Equal(t, anchorTxID.CloneBytes(), specs[1].MatchKey)
+
+	// At depth six the dependency leaves the frontier, but the tip stays.
+	specs, err = receiveRegistrationSpecs(file, 6, 695)
+	require.NoError(t, err)
+	require.Len(t, specs, 1)
+	require.Equal(t, anchorTxID.CloneBytes(), specs[0].MatchKey)
+
+	// Once both transactions have reached depth six no watch is needed.
+	specs, err = receiveRegistrationSpecs(file, 6, 705)
+	require.NoError(t, err)
+	require.Empty(t, specs)
+
+	// Repeating an input file repeats a proof position, not a transaction.
+	tip, err := file.ProofAt(0)
+	require.NoError(t, err)
+	tip.AdditionalInputs = append(
+		tip.AdditionalInputs, tip.AdditionalInputs[0],
+	)
+	repeated, err := proof.NewFile(proof.V0, *tip)
+	require.NoError(t, err)
+	specs, err = receiveRegistrationSpecs(repeated, 6, 692)
+	require.NoError(t, err)
+	require.Len(t, specs, 2)
+}
+
+// TestRegisterReceiveAnchoringRunsOnePhase1 asserts that a whole proof DAG is
+// registered with one shared storage write.
+func TestRegisterReceiveAnchoringRunsOnePhase1(t *testing.T) {
+	t.Parallel()
+
+	inputTx := wire.NewMsgTx(2)
+	inputTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{}, nil, nil))
+	inputTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0x20}))
+
+	anchorTx := wire.NewMsgTx(2)
+	anchorTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{
+		Hash: inputTx.TxHash(), Index: 0,
+	}, nil, nil))
+	anchorTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xaa}))
+
+	registrar := tapreorg.NewMockRegistrar()
+	registrar.RunPhase1(&tapreorg.MockRegistryTx{})
+	c := &Custodian{cfg: &Config{
+		AnchoringWatcher:   registrar,
+		AnchoringThreshold: 6,
+	}}
+
+	var calls int
+	err := c.RegisterReceiveAnchoring(
+		context.Background(), trimmedTransferFile(t, anchorTx, inputTx),
+		func(_ context.Context, _ tapreorg.RegistryTx,
+			ids []tapreorg.AnchoringID) error {
+
+			calls++
+			require.Len(t, ids, 2)
+
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
 }
 
 // TestRegisterReceiveAnchoringUnwatchable asserts that a genesis-shape
@@ -613,6 +705,120 @@ func TestCustodianRefusesAbandonedImport(t *testing.T) {
 	require.True(t, has)
 }
 
+// TestStakeReceiveRefusesAbandonedAttach pins the stake against an
+// abandonment that lands between the custodian's early check and the
+// registration: the early lookup still reports the receive as live, the
+// registry holds it abandoned, and the stake is refused inside the
+// registration with nothing imported, mirrored or announced.
+func TestStakeReceiveRefusesAbandonedAttach(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	inputTx := wire.NewMsgTx(2)
+	inputTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{}, nil, nil))
+	inputTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0x20}))
+	anchorTx := wire.NewMsgTx(2)
+	inputOp := wire.OutPoint{Hash: inputTx.TxHash(), Index: 0}
+	anchorTx.AddTxIn(wire.NewTxIn(&inputOp, nil, nil))
+	anchorTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xee}))
+	file := trimmedTransferFile(t, anchorTx, inputTx)
+	tip, err := file.LastProof()
+	require.NoError(t, err)
+
+	var blob bytes.Buffer
+	require.NoError(t, file.Encode(&blob))
+	annotated := &proof.AnnotatedProof{
+		Locator: proof.Locator{
+			AssetID:   fn.Ptr(tip.Asset.ID()),
+			ScriptKey: *tip.Asset.ScriptKey.PubKey,
+			OutPoint:  fn.Ptr(tip.OutPoint()),
+		},
+		Blob: blob.Bytes(),
+	}
+
+	// The receive is registered and then abandoned in the registry.
+	mock := tapreorg.NewMockRegistrar()
+	mock.RunPhase1(&tapreorg.MockRegistryTx{})
+	c := &Custodian{cfg: &Config{
+		AnchoringWatcher:   mock,
+		AnchoringThreshold: 6,
+	}}
+	require.NoError(t, c.RegisterReceiveAnchoring(ctx, file, nil))
+	anchorTxid := anchorTx.TxHash()
+	registered, err := mock.LookupByMatchKey(
+		ctx, ReceiveSiteID, anchorTxid.CloneBytes(),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, registered)
+
+	foreign := wire.NewMsgTx(2)
+	foreign.AddTxIn(wire.NewTxIn(&inputOp, nil, nil))
+	foreign.AddTxOut(wire.NewTxOut(900, []byte{0x51, 0xff}))
+	require.NoError(t, mock.Abandon(
+		registered.ID, foreign, chainhash.Hash{0x99}, 700, 1,
+	))
+
+	// The custodian's early lookup is stale: it still sees the
+	// receive as live.
+	archive, err := proof.NewFileArchiver(t.TempDir())
+	require.NoError(t, err)
+	stale := &phasedRegistrar{
+		Registrar: mock,
+		phase:     tapreorg.Witnessed{},
+	}
+	c = NewCustodian(&Config{
+		ProofArchive:       archive,
+		AnchoringWatcher:   stale,
+		AnchoringLog:       &archiveStakingLog{archive: archive},
+		ProofVerifier:      stubVerifier{},
+		AnchoringThreshold: 6,
+	})
+
+	err = c.assertProofInLocalArchive(annotated)
+	require.ErrorIs(t, err, ErrAnchoringAbandoned)
+	has, err := archive.HasProof(ctx, annotated.Locator)
+	require.NoError(t, err)
+	require.False(t, has)
+}
+
+// TestStakeReceiveAlreadySafe asserts that a proof whose complete DAG is past
+// the safety frontier imports normally without manufacturing watcher rows.
+func TestStakeReceiveAlreadySafe(t *testing.T) {
+	t.Parallel()
+
+	anchorTx := wire.NewMsgTx(2)
+	anchorTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{}, nil, nil))
+	anchorTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xdd}))
+	file := singleProofGenesisFile(t, anchorTx)
+
+	var encoded bytes.Buffer
+	require.NoError(t, file.Encode(&encoded))
+	annotated := &proof.AnnotatedProof{Blob: encoded.Bytes()}
+
+	archive, err := proof.NewFileArchiver(t.TempDir())
+	require.NoError(t, err)
+	registrar := tapreorg.NewMockRegistrar()
+	registrar.SetBestHeight(705)
+	c := NewCustodian(&Config{
+		ProofArchive:       archive,
+		AnchoringWatcher:   registrar,
+		AnchoringLog:       &archiveStakingLog{archive: archive},
+		AnchoringThreshold: 6,
+		ProofVerifier:      stubVerifier{},
+	})
+
+	require.NoError(t, c.StakeReceive(context.Background(), annotated))
+	has, err := archive.HasProof(context.Background(), annotated.Locator)
+	require.NoError(t, err)
+	require.True(t, has)
+
+	anchorings, err := registrar.AllAnchorings(
+		context.Background(), ReceiveSiteID,
+	)
+	require.NoError(t, err)
+	require.Empty(t, anchorings)
+}
+
 // stubVerifier accepts any decodable file, answering with its tip:
 // the receive site's tests build synthetic proofs no chain can
 // verify.
@@ -650,6 +856,18 @@ type archiveStakingLog struct {
 
 func (l *archiveStakingLog) StakeReceivedProofs(ctx context.Context,
 	_ tapreorg.RegistryTx,
+	proofs ...proof.VerifiedAnnotatedProof) ([]proof.Blob, error) {
+
+	return l.storeReceivedProofs(ctx, proofs...)
+}
+
+func (l *archiveStakingLog) StoreReceivedProofs(ctx context.Context,
+	proofs ...proof.VerifiedAnnotatedProof) ([]proof.Blob, error) {
+
+	return l.storeReceivedProofs(ctx, proofs...)
+}
+
+func (l *archiveStakingLog) storeReceivedProofs(ctx context.Context,
 	proofs ...proof.VerifiedAnnotatedProof) ([]proof.Blob, error) {
 
 	var imported []proof.Blob

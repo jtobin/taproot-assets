@@ -45,6 +45,12 @@ func (l *recordingReceiveLog) StakeReceivedProofs(_ context.Context,
 	return nil, nil
 }
 
+func (l *recordingReceiveLog) StoreReceivedProofs(_ context.Context,
+	_ ...proof.VerifiedAnnotatedProof) ([]proof.Blob, error) {
+
+	return nil, nil
+}
+
 func (l *recordingReceiveLog) NotifyProofs(_ ...proof.Blob) {}
 
 func (l *recordingReceiveLog) HasReceivedProof(_ context.Context,

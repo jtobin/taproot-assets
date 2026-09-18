@@ -22,6 +22,14 @@ var (
 	// live anchoring but the anchoring is terminal.
 	ErrTerminalPhase = errors.New("anchoring is terminal")
 
+	// ErrAnchoringAbandoned is returned when a registration whose
+	// phase-1 write is its own (Phase1OnAttach) attaches to an
+	// anchoring that is abandoned: the stake would materialize
+	// state the site's compensation has withdrawn, only for the
+	// attach's re-delivery to withdraw it again inside the same
+	// transaction while the caller believes it committed.
+	ErrAnchoringAbandoned = errors.New("anchoring is abandoned")
+
 	// ErrIncompleteSpend is returned when a satisfying candidate's
 	// transaction does not spend the anchoring's entire trigger
 	// set: under the whole-set rule such a transaction cannot
@@ -45,6 +53,10 @@ var (
 	// on the next outbox pass: the next scan, or the kick the owning
 	// subsystem gives once the inputs exist.
 	ErrEffectNotReady = errors.New("effect inputs not ready")
+
+	// ErrEmptyRegistrationBatch is returned when a caller attempts to
+	// register no anchoring specifications.
+	ErrEmptyRegistrationBatch = errors.New("registration batch is empty")
 )
 
 // DependencyEdge records that a child anchoring's trigger outpoints
@@ -94,11 +106,35 @@ type StoredEffect struct {
 type ReconcileFunc func(ctx context.Context, tx RegistryTx,
 	anchoring *Anchoring, addedTriggers []TriggerOutPoint) error
 
+// BatchPhase1Func materializes one speculative state change for a set of
+// registrations. The identifiers correspond to the requests in order. The
+// function runs once, after every registration row exists, on the same
+// transaction that owns those rows.
+type BatchPhase1Func func(ctx context.Context, tx RegistryTx,
+	ids []AnchoringID) error
+
+// RegistrationRequest couples one durable registration specification to the
+// reconciliation needed when it attaches or carries a seed. A batch shares
+// one phase-1 write but retains request-specific reconciliation.
+type RegistrationRequest struct {
+	Spec      RegistrationSpec
+	Reconcile ReconcileFunc
+}
+
 // Registry is the durable store of anchorings: the watcher's source
 // of truth. Implemented by tapdb, over the same database every site's
 // state lives in — which is what makes the transactional coupling of
 // registry advances and site handlers possible.
 type Registry interface {
+	// RegisterBatch registers every request and runs phase1 exactly once,
+	// after all registry rows exist. The rows, trigger unions, dependency
+	// edges, phase-1 write and request-specific reconciliations commit or
+	// roll back as one transaction. Returned identifiers preserve request
+	// order and may repeat when requests share an identity.
+	RegisterBatch(ctx context.Context, requests []RegistrationRequest,
+		createdHeight uint32, phase1 BatchPhase1Func) (
+		[]AnchoringID, error)
+
 	// Register inserts the anchoring (phase Unwitnessed, delivered
 	// Unwitnessed) at the given best height, derives its
 	// dependency edges from live anchorings with a recorded

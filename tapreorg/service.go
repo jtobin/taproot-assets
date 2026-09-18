@@ -360,6 +360,12 @@ func (w *Watcher) Stop() error {
 	return nil
 }
 
+// BestHeight returns the latest chain height observed by the watcher. Before
+// startup it returns zero, which makes protection decisions conservative.
+func (w *Watcher) BestHeight() uint32 {
+	return w.bestHeight.Load()
+}
+
 // Register stakes a new anchoring: the registry insert, dependency-
 // edge derivation and the site's phase-1 write commit in one
 // transaction, and sensing begins immediately after. The site must
@@ -379,62 +385,83 @@ func (w *Watcher) Register(ctx context.Context, spec RegistrationSpec,
 	phase1 func(context.Context, RegistryTx,
 		AnchoringID) error) (AnchoringID, error) {
 
-	site, ok := w.sites[spec.Site]
-	if !ok {
-		return 0, fmt.Errorf("unknown site %v", spec.Site)
-	}
+	var batchPhase1 BatchPhase1Func
+	if phase1 != nil {
+		batchPhase1 = func(ctx context.Context, tx RegistryTx,
+			ids []AnchoringID) error {
 
-	// An unset threshold defers to the watcher's configured policy
-	// default.
-	if spec.Threshold == 0 {
-		spec.Threshold = w.cfg.DefaultThreshold
-	}
-
-	// The reconcile callback lands the site's materialized state on
-	// an anchoring's delivered phase inside the registration
-	// transaction. For a registration that finds its identity
-	// already registered, that phase is what the anchoring's earlier
-	// stakes already reflect, re-delivered atomically with the
-	// lookup that found the anchoring so a concurrent delivery
-	// cannot slip between them. Handlers are convergent by contract,
-	// which is what makes the re-delivery safe, and it is what
-	// attaches late-arriving state to a resting or terminal
-	// anchoring that will never be delivered again. That includes a
-	// delivered Unwitnessed after a soft re-org at rest — such an
-	// anchoring may likewise see no further delivery, and an
-	// exemption would let state imported with a confirmation the
-	// re-org discarded outlive the rollback. For a seeded
-	// registration the callback runs at birth, against the phase the
-	// seed derives, so a site that materialized confirmed state
-	// before registering is never handed the registry's default
-	// Unwitnessed by a later attach: the birth phase already says
-	// what the site knows. Sites that register before their
-	// transaction confirms are born Unwitnessed with nothing to
-	// withdraw.
-	var triggersAdded bool
-	reconcile := func(ctx context.Context, tx RegistryTx,
-		anchoring *Anchoring, added []TriggerOutPoint) error {
-
-		if len(added) > 0 {
-			triggersAdded = true
+			return phase1(ctx, tx, ids[0])
 		}
-
-		delivered := anchoring.DeliveredPhase
-		reconciled := *anchoring
-		reconciled.Phase = delivered
-
-		return capturePanic("site handler", func() error {
-			return dispatchPhase(
-				ctx, site, tx, &reconciled, delivered,
-			)
-		})
 	}
-
-	id, err := w.cfg.Registry.Register(
-		ctx, spec, w.bestHeight.Load(), phase1, reconcile,
+	ids, err := w.RegisterBatch(
+		ctx, []RegistrationSpec{spec}, batchPhase1,
 	)
 	if err != nil {
 		return 0, err
+	}
+
+	return ids[0], nil
+}
+
+// RegisterBatch stakes several anchorings with one phase-1 write. All
+// registry rows exist before phase1 runs, and all rows and site state commit
+// or roll back together.
+func (w *Watcher) RegisterBatch(ctx context.Context,
+	specs []RegistrationSpec, phase1 BatchPhase1Func) (
+	[]AnchoringID, error) {
+
+	if len(specs) == 0 {
+		return nil, ErrEmptyRegistrationBatch
+	}
+
+	requests := make([]RegistrationRequest, len(specs))
+	triggersAdded := make(map[AnchoringID]bool)
+	for idx := range specs {
+		spec := specs[idx]
+		site, ok := w.sites[spec.Site]
+		if !ok {
+			return nil, fmt.Errorf("unknown site %v", spec.Site)
+		}
+
+		// An unset threshold defers to the watcher's configured policy
+		// default.
+		if spec.Threshold == 0 {
+			spec.Threshold = w.cfg.DefaultThreshold
+		}
+
+		// Reconciliation lands materialized state on the delivered
+		// phase inside the registration transaction. Handlers are
+		// convergent, so this safely attaches new state to resting or
+		// terminal anchorings and initializes seeded births at the
+		// phase their evidence already establishes.
+		reconcile := func(ctx context.Context, tx RegistryTx,
+			anchoring *Anchoring, added []TriggerOutPoint) error {
+
+			if len(added) > 0 {
+				triggersAdded[anchoring.ID] = true
+			}
+
+			delivered := anchoring.DeliveredPhase
+			reconciled := *anchoring
+			reconciled.Phase = delivered
+
+			return capturePanic("site handler", func() error {
+				return dispatchPhase(
+					ctx, site, tx, &reconciled, delivered,
+				)
+			})
+		}
+		requests[idx] = RegistrationRequest{
+			Spec:      spec,
+			Reconcile: reconcile,
+		}
+	}
+
+	ids, err := w.cfg.Registry.RegisterBatch(
+		ctx, requests, w.bestHeight.Load(), phase1,
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	// The anchoring is durably registered from here on, so the
@@ -450,20 +477,28 @@ func (w *Watcher) Register(ctx context.Context, spec RegistrationSpec,
 	handOffCtx, cancel := w.WithCtxQuit()
 	defer cancel()
 
-	if triggersAdded {
-		err := w.sendEvent(handOffCtx, evStopSensing{id: id})
-		if err != nil {
-			log.Warnf("Anchoring %d: sensor teardown "+
-				"hand-off failed, reconciliation sweep "+
-				"will adopt: %v", id, err)
+	handedOff := make(map[AnchoringID]struct{}, len(ids))
+	for _, id := range ids {
+		if _, ok := handedOff[id]; ok {
+			continue
+		}
+		handedOff[id] = struct{}{}
+
+		if triggersAdded[id] {
+			err := w.sendEvent(handOffCtx, evStopSensing{id: id})
+			if err != nil {
+				log.Warnf("Anchoring %d: sensor teardown "+
+					"failed, reconciliation sweep "+
+					"will adopt: %v", id, err)
+			}
+		}
+		if err := w.sendEvent(handOffCtx, evSense{id: id}); err != nil {
+			log.Warnf("Anchoring %d: sensing hand-off failed, "+
+				"reconciliation sweep will adopt: %v", id, err)
 		}
 	}
-	if err := w.sendEvent(handOffCtx, evSense{id: id}); err != nil {
-		log.Warnf("Anchoring %d: sensing hand-off failed, "+
-			"reconciliation sweep will adopt: %v", id, err)
-	}
 
-	return id, nil
+	return ids, nil
 }
 
 // Withdraw revokes a live stake: the site's withdrawal write and the

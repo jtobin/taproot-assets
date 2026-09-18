@@ -644,4 +644,46 @@ func TestStakeReceivedProofsAtomic(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, has)
 	}
+
+	// An already-safe receive uses the same idempotent import body in its
+	// own transaction because it has no watcher registration to share.
+	_, safe := NewDbHandle(t).AddRandomAssetProof(t)
+	completeLocator(safe)
+	verifiedSafe, err := proof.VerifyAnnotatedProofsWithVerifier(
+		ctx, snapshotVerifier{snapshot: safe.AssetSnapshot},
+		proof.MockVerifierCtx, safe,
+	)
+	require.NoError(t, err)
+
+	imported, err = assetsStore.StoreReceivedProofs(ctx, verifiedSafe...)
+	require.NoError(t, err)
+	require.Len(t, imported, 1)
+	has, err = assetsStore.HasReceivedProof(ctx, safe.Locator)
+	require.NoError(t, err)
+	require.True(t, has)
+
+	imported, err = assetsStore.StoreReceivedProofs(ctx, verifiedSafe...)
+	require.NoError(t, err)
+	require.Empty(t, imported)
+
+	effects, err := registry.PendingEffects(
+		ctx, time.Unix(1<<32, 0), 10,
+	)
+	require.NoError(t, err)
+	require.Len(t, effects, 1)
+	require.Equal(
+		t, tapreorg.EffectKind(proof.MirrorSyncEffectKind),
+		effects[0].Effect.Kind,
+	)
+	require.Zero(t, effects[0].Effect.Anchoring.UnwrapOr(0))
+	sync, err := proof.DecodeMirrorSyncPayload(
+		effects[0].Effect.Payload.Version,
+		effects[0].Effect.Payload.Data,
+	)
+	require.NoError(t, err)
+	require.Equal(t, proof.MirrorSyncRewrite, sync.Op)
+	require.Len(t, sync.Locators, 1)
+	require.Equal(t, safe.AssetID, sync.Locators[0].AssetID)
+	require.True(t, safe.ScriptKey.IsEqual(&sync.Locators[0].ScriptKey))
+	require.Equal(t, safe.Locator.OutPoint, sync.Locators[0].OutPoint)
 }

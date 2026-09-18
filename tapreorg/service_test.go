@@ -232,6 +232,25 @@ func (f *faultRegistry) Register(ctx context.Context,
 	)
 }
 
+func (f *faultRegistry) RegisterBatch(ctx context.Context,
+	requests []tapreorg.RegistrationRequest, createdHeight uint32,
+	phase1 tapreorg.BatchPhase1Func) ([]tapreorg.AnchoringID, error) {
+
+	if err := f.failNext("RegisterBatch"); err != nil {
+		return nil, err
+	}
+	if err := f.failNext("Register"); err != nil {
+		return nil, err
+	}
+	if f.detach.Load() {
+		ctx = context.WithoutCancel(ctx)
+	}
+
+	return f.Registry.RegisterBatch(
+		ctx, requests, createdHeight, phase1,
+	)
+}
+
 func (f *faultRegistry) GetAnchoring(ctx context.Context,
 	id tapreorg.AnchoringID) (*tapreorg.Anchoring, error) {
 

@@ -49,6 +49,41 @@ func genTx(t *rapid.T, label string) *wire.MsgTx {
 	return tx
 }
 
+// TestAnchorNeedsProtectionRapid checks the confirmation frontier without
+// relying on arithmetic that can overflow at the top of the height range.
+func TestAnchorNeedsProtectionRapid(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(t *rapid.T) {
+		blockHeight := rapid.Uint32Range(1, ^uint32(0)).Draw(
+			t, "block height",
+		)
+		threshold := rapid.Uint32Range(1, 10_000).Draw(
+			t, "threshold",
+		)
+		depth := rapid.Uint32Range(1, 20_000).Draw(t, "depth")
+
+		var bestHeight uint32
+		if depth-1 > ^uint32(0)-blockHeight {
+			bestHeight = ^uint32(0)
+		} else {
+			bestHeight = blockHeight + depth - 1
+		}
+		actualDepth := bestHeight - blockHeight + 1
+
+		require.Equal(
+			t, actualDepth < threshold,
+			AnchorNeedsProtection(
+				bestHeight, blockHeight, threshold,
+			),
+		)
+		require.True(t, AnchorNeedsProtection(bestHeight, 0, threshold))
+		require.True(
+			t, AnchorNeedsProtection(bestHeight, blockHeight, 0),
+		)
+	})
+}
+
 // genWitnessAt draws a witness located at the given height.
 func genWitnessAt(t *rapid.T, label string, height uint32) Witness {
 	w, err := NewWitness(

@@ -17,13 +17,12 @@ import (
 	"github.com/lightninglabs/taproot-assets/tapreorg"
 )
 
-// This file houses the transaction-scoped bodies of the receive
-// side's persistence operations, run inside the re-org watcher's
-// delivery transactions by the custodian's site handlers. The
-// receiver's speculative state is what a received proof's import
-// materialized: asset rows anchored in the sender's transaction,
-// the address events completed against it, and the stored proof
-// files themselves.
+// This file houses the receive side's persistence operations. Speculative
+// bodies run inside the re-org watcher's delivery transactions; proofs whose
+// complete DAG is already safe import in a standalone transaction. The
+// receiver's state is what a received proof's import materialized: asset rows
+// anchored in the sender's transaction, address events completed against it,
+// and the stored proof files themselves.
 //
 // The bodies report the locators of the proofs they rewrote or
 // deleted, so the site can enqueue the file mirror's catch-up: the
@@ -327,26 +326,86 @@ func (a *AssetStore) StakeReceivedProofs(ctx context.Context,
 	tx tapreorg.RegistryTx,
 	proofs ...proof.VerifiedAnnotatedProof) ([]proof.Blob, error) {
 
-	q := tx.Queries()
+	imported, _, err := a.storeReceivedProofs(
+		ctx, tx.Queries(), proofs...,
+	)
+
+	return imported, err
+}
+
+// StoreReceivedProofs imports verified received proofs in a standalone
+// transaction. It is the terminal path for a proof DAG whose anchors have all
+// crossed the safety depth and therefore need no watcher registrations.
+func (a *AssetStore) StoreReceivedProofs(ctx context.Context,
+	proofs ...proof.VerifiedAnnotatedProof) ([]proof.Blob, error) {
 
 	var imported []proof.Blob
+	var writeTxOpts AssetStoreTxOptions
+	err := a.db.ExecTx(ctx, &writeTxOpts, func(q ActiveAssetsStore) error {
+		var locators []proof.Locator
+		var err error
+		imported, locators, err = a.storeReceivedProofs(
+			ctx, q, proofs...,
+		)
+		if err != nil || len(locators) == 0 {
+			return err
+		}
+
+		version, data, err := proof.MirrorSyncPayload{
+			Op:       proof.MirrorSyncRewrite,
+			Locators: locators,
+		}.Encode()
+		if err != nil {
+			return fmt.Errorf("encoding mirror sync: %w", err)
+		}
+
+		_, err = q.InsertReorgEffect(
+			ctx, sqlc.InsertReorgEffectParams{
+				AnchoringID:    sql.NullInt64{},
+				EffectKind:     proof.MirrorSyncEffectKind,
+				PayloadVersion: int16(version),
+				PayloadData:    data,
+				CreatedAt:      a.clock.Now().Unix(),
+			},
+		)
+
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return imported, nil
+}
+
+// storeReceivedProofs performs the idempotent receive import on the caller's
+// transaction.
+func (a *AssetStore) storeReceivedProofs(ctx context.Context,
+	q ActiveAssetsStore,
+	proofs ...proof.VerifiedAnnotatedProof) ([]proof.Blob,
+	[]proof.Locator, error) {
+
+	var imported []proof.Blob
+	var locators []proof.Locator
 	for _, verified := range proofs {
 		p := verified.AnnotatedProof()
 
 		have, err := hasReceivedProof(ctx, q, p.Locator)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if have {
 			continue
 		}
 
 		if err := a.importAssetFromProof(ctx, q, p); err != nil {
-			return nil, fmt.Errorf("unable to import asset: %w",
-				err)
+			return nil, nil, fmt.Errorf(
+				"unable to import asset: %w", err,
+			)
 		}
 		imported = append(imported, p.Blob)
+		locators = append(locators, p.Locator)
 	}
 
-	return imported, nil
+	return imported, locators, nil
 }
