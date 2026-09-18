@@ -393,10 +393,13 @@ func (a *AssetStore) applyAnchorTxConfirm(ctx context.Context,
 		// Upload proof by the dbAssetId, which is the _primary
 		// key_ of the asset in table assets, not the BIPS
 		// concept of `asset_id`.
-		err = q.UpsertAssetProofByID(ctx, ProofUpdateByID{
-			AssetID:   newAssetID,
-			ProofFile: receiverProof.Blob,
-		})
+		indexed, err := NewIndexedProofFile(receiverProof.Blob)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"unable to index output proof: %w", err,
+			)
+		}
+		err = StoreIndexedAssetProof(ctx, q, newAssetID, indexed)
 		if err != nil {
 			return nil, err
 		}
@@ -1108,10 +1111,13 @@ func (a *AssetStore) rollBackPassiveFile(ctx context.Context,
 	}
 
 	// And the truncated proof file.
-	err = q.UpsertAssetProofByID(ctx, ProofUpdateByID{
-		AssetID:   assetID,
-		ProofFile: truncatedBuf.Bytes(),
-	})
+	indexed, err := NewIndexedProofFile(truncatedBuf.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf(
+			"unable to index truncated proof: %w", err,
+		)
+	}
+	err = StoreIndexedAssetProof(ctx, q, assetID, indexed)
 	if err != nil {
 		return nil, fmt.Errorf("unable to store truncated proof: %w",
 			err)

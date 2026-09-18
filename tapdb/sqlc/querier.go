@@ -96,6 +96,7 @@ type Querier interface {
 	DeleteAddrEventProofsByAssetID(ctx context.Context, assetID sql.NullInt64) (int64, error)
 	DeleteAllNodes(ctx context.Context, namespace string) (int64, error)
 	DeleteAssetByID(ctx context.Context, assetID int64) error
+	DeleteAssetProofAnchors(ctx context.Context, proofID int64) error
 	DeleteAssetProofByAssetID(ctx context.Context, assetID int64) error
 	DeleteAssetWitnesses(ctx context.Context, assetID int64) error
 	DeleteAuthMailboxMessageByIDAndReceiver(ctx context.Context, arg DeleteAuthMailboxMessageByIDAndReceiverParams) (int64, error)
@@ -160,7 +161,10 @@ type Querier interface {
 	FetchAssetMetaByHash(ctx context.Context, metaDataHash []byte) (FetchAssetMetaByHashRow, error)
 	FetchAssetMetaForAsset(ctx context.Context, assetID []byte) (FetchAssetMetaForAssetRow, error)
 	FetchAssetProof(ctx context.Context, arg FetchAssetProofParams) ([]FetchAssetProofRow, error)
+	FetchAssetProofFileByProofID(ctx context.Context, proofID int64) ([]byte, error)
+	FetchAssetProofID(ctx context.Context, assetID int64) (int64, error)
 	FetchAssetProofs(ctx context.Context) ([]FetchAssetProofsRow, error)
+	FetchAssetProofsByAnchorTx(ctx context.Context, anchorTxid []byte) ([]FetchAssetProofsByAnchorTxRow, error)
 	FetchAssetProofsByAssetID(ctx context.Context, assetID []byte) ([]FetchAssetProofsByAssetIDRow, error)
 	// The proofs of all assets identified by the passed set of asset primary keys
 	// are fetched in a single query.
@@ -267,6 +271,7 @@ type Querier interface {
 	FetchTapscriptTree(ctx context.Context, rootHash []byte) ([]FetchTapscriptTreeRow, error)
 	FetchTransferInputs(ctx context.Context, transferID int64) ([]FetchTransferInputsRow, error)
 	FetchTransferOutputs(ctx context.Context, transferID int64) ([]FetchTransferOutputsRow, error)
+	FetchUnindexedAssetProofs(ctx context.Context, rowLimit int32) ([]FetchUnindexedAssetProofsRow, error)
 	// Note on hash construction: mssmt_nodes.hash_key on a compacted leaf
 	// commits to the subtree root at that leaf's tree height, which
 	// varies with the tree's shape and is therefore NOT canonical across
@@ -307,6 +312,7 @@ type Querier interface {
 	GenesisPoints(ctx context.Context) ([]GenesisPoint, error)
 	GetRootKey(ctx context.Context, id []byte) (Macaroon, error)
 	HasAssetProof(ctx context.Context, tweakedScriptKey []byte) (bool, error)
+	InsertAssetProofAnchor(ctx context.Context, arg InsertAssetProofAnchorParams) error
 	InsertAssetSeedling(ctx context.Context, arg InsertAssetSeedlingParams) error
 	InsertAssetSeedlingIntoBatch(ctx context.Context, arg InsertAssetSeedlingIntoBatchParams) error
 	InsertAssetTransfer(ctx context.Context, arg InsertAssetTransferParams) (int64, error)
@@ -374,6 +380,7 @@ type Querier interface {
 	// production shape of "does this site already have an anchoring for
 	// this identity?"
 	LookupReorgAnchoringByMatchKey(ctx context.Context, arg LookupReorgAnchoringByMatchKeyParams) (ReorgAnchoring, error)
+	MarkAssetProofProvenanceIndexed(ctx context.Context, proofID int64) error
 	MarkManagedUTXOAsSwept(ctx context.Context, arg MarkManagedUTXOAsSweptParams) error
 	// Mark a supply pre-commitment output as spent by its outpoint. The
 	// pre-commitment corresponds to an asset issuance where the local node acted as

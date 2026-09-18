@@ -523,7 +523,12 @@ func TestImportAssetProof(t *testing.T) {
 
 	// We'll now attempt to overwrite the proof with one that has different
 	// block information (simulating a re-org).
-	updatedBlob := bytes.Repeat([]byte{0x77}, 100)
+	var updatedProof proof.Proof
+	err = updatedProof.Decode(bytes.NewReader(initialBlob))
+	require.NoError(t, err)
+	updatedProof.BlockHeader.Nonce++
+	updatedBlob, err := updatedProof.Bytes()
+	require.NoError(t, err)
 
 	testProof.AnchorBlockHash = chainhash.Hash{12, 34, 56}
 	testProof.AnchorBlockHeight = 1234
@@ -581,7 +586,9 @@ func TestImportAssetProof(t *testing.T) {
 	}
 	testProof.AssetSnapshot.AnchorTx = newChainTx
 	testProof.AssetSnapshot.OutPoint = newOutpoint
-	testProof.Blob = []byte("new proof")
+	updatedProof.AnchorTx = *newChainTx
+	testProof.Blob, err = updatedProof.Bytes()
+	require.NoError(t, err)
 
 	require.NoError(t, assetStore.ImportProofs(
 		ctxb, proof.MockVerifierCtx, false, testProof,

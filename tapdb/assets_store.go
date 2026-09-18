@@ -209,6 +209,10 @@ type ActiveAssetsStore interface {
 	// assets.
 	UpsertAssetStore
 
+	// AssetProofStore houses the atomic proof blob and provenance index
+	// operations.
+	AssetProofStore
+
 	// TransferOutputAssetID returns the asset row a transfer output
 	// materialized into, if any.
 	TransferOutputAssetID(ctx context.Context,
@@ -291,10 +295,6 @@ type ActiveAssetsStore interface {
 	// table for a given asset identified by `Outpoint` and
 	// `TweakedScriptKey`.
 	FetchAssetID(ctx context.Context, arg FetchAssetID) ([]int64, error)
-
-	// UpsertAssetProofByID inserts a new or updates an existing asset
-	// proof on disk.
-	UpsertAssetProofByID(ctx context.Context, arg ProofUpdateByID) error
 
 	// UpsertAssetWitness upserts a new prev input for an asset into the
 	// database.
@@ -2175,12 +2175,14 @@ func (a *AssetStore) importAssetFromProof(ctx context.Context,
 		return fmt.Errorf("unable to insert asset witness: %w", err)
 	}
 
+	indexedProof, err := NewIndexedProofFile(proof.Blob)
+	if err != nil {
+		return fmt.Errorf("unable to index asset proof: %w", err)
+	}
+
 	// Upload proof by the dbAssetId, which is the _primary key_ of the
 	// asset in table assets, not the BIPS concept of `asset_id`.
-	return db.UpsertAssetProofByID(ctx, ProofUpdateByID{
-		AssetID:   assetIDs[0],
-		ProofFile: proof.Blob,
-	})
+	return StoreIndexedAssetProof(ctx, db, assetIDs[0], indexedProof)
 }
 
 // restoreGroupWitness restores the group witness of a transferred asset from
@@ -2305,12 +2307,14 @@ func (a *AssetStore) upsertAssetProof(ctx context.Context,
 			"ids %v", len(dbAssetIds), dbAssetIds)
 	}
 
+	indexedProof, err := NewIndexedProofFile(proof.Blob)
+	if err != nil {
+		return fmt.Errorf("unable to index asset proof: %w", err)
+	}
+
 	// Upload proof by the dbAssetId, which is the _primary key_ of the
 	// asset in table assets, not the BIPS concept of `asset_id`.
-	return db.UpsertAssetProofByID(ctx, ProofUpdateByID{
-		AssetID:   dbAssetIds[0],
-		ProofFile: proof.Blob,
-	})
+	return StoreIndexedAssetProof(ctx, db, dbAssetIds[0], indexedProof)
 }
 
 // ImportProofs attempts to store fully populated proofs on disk. The previous
@@ -3626,10 +3630,14 @@ func (a *AssetStore) reAnchorPassiveAssets(ctx context.Context,
 				err)
 		}
 		if fileTip != nil && *fileTip != newAnchor {
-			err = q.UpsertAssetProofByID(ctx, ProofUpdateByID{
-				AssetID:   passiveAsset.AssetID,
-				ProofFile: proofFile,
-			})
+			indexed, err := NewIndexedProofFile(proofFile)
+			if err != nil {
+				return fmt.Errorf("unable to index passive "+
+					"asset proof file: %w", err)
+			}
+			err = StoreIndexedAssetProof(
+				ctx, q, passiveAsset.AssetID, indexed,
+			)
 			if err != nil {
 				return fmt.Errorf("unable to update passive "+
 					"asset proof file: %w", err)
@@ -3664,10 +3672,14 @@ func (a *AssetStore) reAnchorPassiveAssets(ctx context.Context,
 		}
 
 		// Update the asset proof.
-		err = q.UpsertAssetProofByID(ctx, ProofUpdateByID{
-			AssetID:   passiveAsset.AssetID,
-			ProofFile: proofFile,
-		})
+		indexed, err := NewIndexedProofFile(proofFile)
+		if err != nil {
+			return fmt.Errorf("unable to index passive "+
+				"asset proof file: %w", err)
+		}
+		err = StoreIndexedAssetProof(
+			ctx, q, passiveAsset.AssetID, indexed,
+		)
 		if err != nil {
 			return fmt.Errorf("unable to update passive asset "+
 				"proof file: %w", err)
