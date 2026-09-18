@@ -17,6 +17,45 @@ import (
 	"pgregory.net/rapid"
 )
 
+type adoptionLog struct {
+	blobs     []proof.Blob
+	ownership map[chainhash.Hash]ProofAnchorOwnership
+
+	// classified counts ownership lookups: one per young anchor the
+	// adopter had to classify.
+	classified int
+}
+
+func (l *adoptionLog) ProofsForAdoption(_ context.Context,
+	_ uint32) ([]proof.Blob, error) {
+
+	return l.blobs, nil
+}
+
+func (l *adoptionLog) ProofAnchorOwnership(_ context.Context,
+	txid chainhash.Hash) (ProofAnchorOwnership, error) {
+
+	l.classified++
+
+	return l.ownership[txid], nil
+}
+
+// countingRegistrar counts the batches the adopter registers.
+type countingRegistrar struct {
+	*tapreorg.MockRegistrar
+
+	batches int
+}
+
+func (r *countingRegistrar) RegisterBatch(ctx context.Context,
+	specs []tapreorg.RegistrationSpec,
+	phase1 tapreorg.BatchPhase1Func) ([]tapreorg.AnchoringID, error) {
+
+	r.batches++
+
+	return r.MockRegistrar.RegisterBatch(ctx, specs, phase1)
+}
+
 // singleProofGenesisFile returns a single-proof file whose tip has no
 // prior asset outpoint — the shape of a genesis-shaped receive.
 func singleProofGenesisFile(t *testing.T,
@@ -287,6 +326,204 @@ func TestReceiveRegistrationSpecsYoungFrontier(t *testing.T) {
 	specs, err = receiveRegistrationSpecs(repeated, 6, 692)
 	require.NoError(t, err)
 	require.Len(t, specs, 2)
+}
+
+// TestAdoptProofsPreservesNativeOwnership asserts that upgrade adoption leaves
+// a locally minted ancestor to the mint site while retaining receive ownership
+// of a self-send also owned by the porter. Replay creates no duplicate.
+func TestAdoptProofsPreservesNativeOwnership(t *testing.T) {
+	t.Parallel()
+
+	inputTx := wire.NewMsgTx(2)
+	inputTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{}, nil, nil))
+	inputTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0x20}))
+
+	anchorTx := wire.NewMsgTx(2)
+	anchorTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{
+		Hash: inputTx.TxHash(), Index: 0,
+	}, nil, nil))
+	anchorTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xaa}))
+
+	file := trimmedTransferFile(t, anchorTx, inputTx)
+	var encoded bytes.Buffer
+	require.NoError(t, file.Encode(&encoded))
+
+	registrar := tapreorg.NewMockRegistrar()
+	registrar.SetBestHeight(692)
+	log := &adoptionLog{
+		blobs: []proof.Blob{encoded.Bytes()},
+		ownership: map[chainhash.Hash]ProofAnchorOwnership{
+			inputTx.TxHash(): {Mint: true},
+			anchorTx.TxHash(): {
+				Porter:  true,
+				Receive: true,
+			},
+		},
+	}
+	c := &Custodian{cfg: &Config{
+		AnchoringWatcher:   registrar,
+		AnchoringThreshold: 6,
+		ProofAdoptionLog:   log,
+	}}
+
+	ctx := context.Background()
+	require.NoError(t, c.AdoptProofs(ctx))
+	require.NoError(t, c.AdoptProofs(ctx))
+
+	anchorings, err := registrar.AllAnchorings(ctx, ReceiveSiteID)
+	require.NoError(t, err)
+	require.Len(t, anchorings, 1)
+	anchorTxID := anchorTx.TxHash()
+	require.Equal(t, anchorTxID.CloneBytes(),
+		anchorings[0].MatchKey)
+
+	inputTxID := inputTx.TxHash()
+	mintOwned, err := registrar.LookupByMatchKey(
+		ctx, ReceiveSiteID, inputTxID.CloneBytes(),
+	)
+	require.NoError(t, err)
+	require.Nil(t, mintOwned)
+}
+
+// TestAdoptProofsSkipsUnadoptableFiles asserts that a stored file adoption
+// cannot act on — undecodable bytes, or a young genesis with nothing to
+// stake on — is left behind without stopping the pass, while the files
+// around it are adopted.
+func TestAdoptProofsSkipsUnadoptableFiles(t *testing.T) {
+	t.Parallel()
+
+	inputTx := wire.NewMsgTx(2)
+	inputTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{}, nil, nil))
+	inputTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0x20}))
+	anchorTx := wire.NewMsgTx(2)
+	anchorTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{
+		Hash: inputTx.TxHash(), Index: 0,
+	}, nil, nil))
+	anchorTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xaa}))
+	good := trimmedTransferFile(t, anchorTx, inputTx)
+	var goodBuf bytes.Buffer
+	require.NoError(t, good.Encode(&goodBuf))
+
+	// A genesis imported before its confirmation: no trigger to watch
+	// and no block context to seed from.
+	unwatchableTx := wire.NewMsgTx(2)
+	unwatchableTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{}, nil, nil))
+	unwatchableTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xbb}))
+	unwatchableTip, err := singleProofGenesisFile(
+		t, unwatchableTx,
+	).LastProof()
+	require.NoError(t, err)
+	unwatchableTip.BlockHeight = 0
+	unwatchable, err := proof.NewFile(proof.V0, *unwatchableTip)
+	require.NoError(t, err)
+	var unwatchableBuf bytes.Buffer
+	require.NoError(t, unwatchable.Encode(&unwatchableBuf))
+
+	registrar := tapreorg.NewMockRegistrar()
+	registrar.SetBestHeight(692)
+	c := &Custodian{cfg: &Config{
+		AnchoringWatcher:   registrar,
+		AnchoringThreshold: 6,
+		ProofAdoptionLog: &adoptionLog{
+			blobs: []proof.Blob{
+				[]byte("not a proof"),
+				unwatchableBuf.Bytes(),
+				goodBuf.Bytes(),
+			},
+		},
+	}}
+
+	ctx := context.Background()
+	require.NoError(t, c.AdoptProofs(ctx))
+
+	anchorings, err := registrar.AllAnchorings(ctx, ReceiveSiteID)
+	require.NoError(t, err)
+	require.Len(t, anchorings, 2)
+}
+
+// TestAdoptProofsRegistersOnce asserts that adoption does no work it has
+// already done: a second pass classifies and registers nothing, and a file
+// whose tip is past the safety depth is not read beyond its tip.
+func TestAdoptProofsRegistersOnce(t *testing.T) {
+	t.Parallel()
+
+	inputTx := wire.NewMsgTx(2)
+	inputTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{}, nil, nil))
+	inputTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0x20}))
+	anchorTx := wire.NewMsgTx(2)
+	anchorTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{
+		Hash: inputTx.TxHash(), Index: 0,
+	}, nil, nil))
+	anchorTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xaa}))
+	file := trimmedTransferFile(t, anchorTx, inputTx)
+	var encoded bytes.Buffer
+	require.NoError(t, file.Encode(&encoded))
+
+	registrar := &countingRegistrar{
+		MockRegistrar: tapreorg.NewMockRegistrar(),
+	}
+	registrar.SetBestHeight(692)
+	log := &adoptionLog{blobs: []proof.Blob{encoded.Bytes()}}
+	c := &Custodian{cfg: &Config{
+		AnchoringWatcher:   registrar,
+		AnchoringThreshold: 6,
+		ProofAdoptionLog:   log,
+	}}
+
+	ctx := context.Background()
+	require.NoError(t, c.AdoptProofs(ctx))
+	require.Equal(t, 1, registrar.batches)
+	require.Equal(t, 2, log.classified)
+
+	// Already staked: nothing to classify, nothing to register.
+	require.NoError(t, c.AdoptProofs(ctx))
+	require.Equal(t, 1, registrar.batches)
+	require.Equal(t, 2, log.classified)
+
+	// Past the safety depth: not even read.
+	fresh := &adoptionLog{blobs: []proof.Blob{encoded.Bytes()}}
+	c.cfg.ProofAdoptionLog = fresh
+	registrar.SetBestHeight(705)
+	require.NoError(t, c.AdoptProofs(ctx))
+	require.Equal(t, 1, registrar.batches)
+	require.Zero(t, fresh.classified)
+}
+
+// TestAdoptProofsStopsOnContextEnd asserts that adoption honours a context
+// that has ended between files: the pass returns the context's error and
+// registers nothing further, so a shutdown request is not held behind the
+// remaining files.
+func TestAdoptProofsStopsOnContextEnd(t *testing.T) {
+	t.Parallel()
+
+	inputTx := wire.NewMsgTx(2)
+	inputTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{}, nil, nil))
+	inputTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0x20}))
+	anchorTx := wire.NewMsgTx(2)
+	anchorTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{
+		Hash: inputTx.TxHash(), Index: 0,
+	}, nil, nil))
+	anchorTx.AddTxOut(wire.NewTxOut(1_000, []byte{0x51, 0xaa}))
+	file := trimmedTransferFile(t, anchorTx, inputTx)
+	var encoded bytes.Buffer
+	require.NoError(t, file.Encode(&encoded))
+
+	registrar := &countingRegistrar{
+		MockRegistrar: tapreorg.NewMockRegistrar(),
+	}
+	registrar.SetBestHeight(692)
+	log := &adoptionLog{blobs: []proof.Blob{encoded.Bytes()}}
+	c := &Custodian{cfg: &Config{
+		AnchoringWatcher:   registrar,
+		AnchoringThreshold: 6,
+		ProofAdoptionLog:   log,
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, c.AdoptProofs(ctx), context.Canceled)
+	require.Zero(t, registrar.batches)
+	require.Zero(t, log.classified)
 }
 
 // TestRegisterReceiveAnchoringRunsOnePhase1 asserts that a whole proof DAG is

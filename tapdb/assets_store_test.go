@@ -2406,6 +2406,12 @@ func TestAssetExportLog(t *testing.T) {
 	require.Len(t, parcels, 1)
 	require.Equal(t, spendDelta, parcels[0])
 
+	// Startup adoption reads confirmed parcels only, so the pending
+	// parcel is not returned even at a floor of zero.
+	adoptable, err := assetsStore.ParcelsForAdoption(ctx, 0)
+	require.NoError(t, err)
+	require.Empty(t, adoptable)
+
 	// With the asset delta committed and verified, we'll now mark the
 	// delta as being confirmed on chain.
 	fakeBlockHash := chainhash.Hash(sha256.Sum256([]byte("fake")))
@@ -2430,6 +2436,21 @@ func TestAssetExportLog(t *testing.T) {
 	spendDelta.AnchorTxBlockHash = fn.Some(fakeBlockHash)
 	spendDelta.AnchorTxBlockHeight = uint32(blockHeight)
 	require.Equal(t, spendDelta, parcels[0])
+
+	// Once confirmed, adoption returns the parcel for any floor at or
+	// below its height and excludes it past that.
+	adoptable, err = assetsStore.ParcelsForAdoption(
+		ctx, uint32(blockHeight),
+	)
+	require.NoError(t, err)
+	require.Len(t, adoptable, 1)
+	require.Equal(t, spendDelta, adoptable[0])
+
+	adoptable, err = assetsStore.ParcelsForAdoption(
+		ctx, uint32(blockHeight)+1,
+	)
+	require.NoError(t, err)
+	require.Empty(t, adoptable)
 
 	// We'll now fetch all the assets to verify that they were updated
 	// properly on disk.

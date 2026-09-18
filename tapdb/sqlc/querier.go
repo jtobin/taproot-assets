@@ -172,6 +172,7 @@ type Querier interface {
 	// The asset_ids argument must NEVER be an empty slice, otherwise this query
 	// will return no results.
 	FetchAssetProofsByIDs(ctx context.Context, assetIds []int64) ([]FetchAssetProofsByIDsRow, error)
+	FetchAssetProofsForAdoption(ctx context.Context, minBlockHeight sql.NullInt32) ([][]byte, error)
 	FetchAssetProofsSizes(ctx context.Context) ([]FetchAssetProofsSizesRow, error)
 	// The witnesses of all assets identified by the passed set of asset primary
 	// keys are fetched in a single query.
@@ -401,6 +402,11 @@ type Querier interface {
 	MarkTransferSuperseded(ctx context.Context, transferID int64) error
 	MaxUniverseLeafJournalSeq(ctx context.Context) (int64, error)
 	NewMintingBatch(ctx context.Context, arg NewMintingBatchParams) error
+	// Classify local subsystem state staked on one proof transition. Mint and
+	// porter rows require their own compensation. An address-event reference is
+	// independently receive-owned, including for a self-send that is also owned
+	// by the porter.
+	ProofAnchorSiteOwnership(ctx context.Context, anchorTxid []byte) (ProofAnchorSiteOwnershipRow, error)
 	QueryAddr(ctx context.Context, arg QueryAddrParams) (QueryAddrRow, error)
 	// We use a LEFT JOIN here as not every asset has a group key, so this'll
 	// generate rows that have NULL values for the group key fields if an asset

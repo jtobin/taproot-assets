@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/txscript/v2"
 	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/lightninglabs/taproot-assets/fn"
+	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -81,6 +82,31 @@ func TestAnchorNeedsProtectionRapid(t *testing.T) {
 		require.True(
 			t, AnchorNeedsProtection(bestHeight, blockHeight, 0),
 		)
+	})
+}
+
+// TestProtectionFloorRapid checks that the floor is the exact boundary of
+// AnchorNeedsProtection over known heights: nothing needing protection lies
+// below it, and the height just below it needs none.
+func TestProtectionFloorRapid(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(t *rapid.T) {
+		bestHeight := rapid.Uint32().Draw(t, "best height")
+		threshold := rapid.Uint32Range(0, 10_000).Draw(t, "threshold")
+		blockHeight := rapid.Uint32Range(1, ^uint32(0)).Draw(
+			t, "block height",
+		)
+
+		floor := ProtectionFloor(bestHeight, threshold)
+		if AnchorNeedsProtection(bestHeight, blockHeight, threshold) {
+			require.GreaterOrEqual(t, blockHeight, floor)
+		}
+		if floor > 1 {
+			require.False(t, AnchorNeedsProtection(
+				bestHeight, floor-1, threshold,
+			))
+		}
 	})
 }
 
@@ -747,4 +773,61 @@ func TestConstructorInvariants(t *testing.T) {
 			t, badSpec.Validate(), "unwatchable pkScript",
 		)
 	}
+}
+
+// TestVerifiedProofContext asserts that the site-to-storage block context is
+// only constructible when the witness, block header and merkle proof describe
+// the same transaction location.
+func TestVerifiedProofContext(t *testing.T) {
+	t.Parallel()
+
+	tx := wire.NewMsgTx(2)
+	tx.LockTime = 7
+	merkleProof, err := proof.NewTxMerkleProof([]*wire.MsgTx{tx}, 0)
+	require.NoError(t, err)
+	header := wire.BlockHeader{
+		Version:    2,
+		MerkleRoot: tx.TxHash(),
+		Nonce:      11,
+	}
+	witness, err := NewWitness(tx, header.BlockHash(), 700, 0)
+	require.NoError(t, err)
+	anchoring := &Anchoring{Spends: []CandidateSpend{{
+		Verdict:     VerdictSatisfies,
+		W:           witness,
+		OnChain:     true,
+		BlockHeader: &header,
+		MerkleProof: merkleProof,
+	}}}
+
+	context, err := VerifiedProofContext(
+		anchoring, Witnessed{W: witness},
+	)
+	require.NoError(t, err)
+	require.Equal(t, tx.TxHash(), context.AnchorTxID())
+	require.Equal(t, header.BlockHash(), context.BlockHash())
+	require.Equal(t, uint32(700), context.BlockHeight())
+	require.Equal(t, uint32(0), context.TxIndex())
+
+	wrongBlock, err := NewWitness(tx, chainhash.Hash{1}, 700, 0)
+	require.NoError(t, err)
+	_, err = VerifiedProofContext(
+		anchoring, Witnessed{W: wrongBlock},
+	)
+	require.ErrorContains(t, err, "does not match header")
+
+	wrongIndex, err := NewWitness(tx, header.BlockHash(), 700, 1)
+	require.NoError(t, err)
+	_, err = VerifiedProofContext(
+		anchoring, Witnessed{W: wrongIndex},
+	)
+	require.ErrorContains(t, err, "does not match merkle proof index")
+
+	badHeader := header
+	badHeader.MerkleRoot = chainhash.Hash{}
+	anchoring.Spends[0].BlockHeader = &badHeader
+	_, err = VerifiedProofContext(
+		anchoring, Witnessed{W: witness},
+	)
+	require.ErrorContains(t, err, "invalid witness block context")
 }

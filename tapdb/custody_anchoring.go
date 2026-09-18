@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -34,21 +33,30 @@ import (
 func anchoredAssetLocator(
 	row sqlc.AnchoredAssetsByAnchorTxPrefixRow) (proof.Locator, error) {
 
-	scriptKey, err := btcec.ParsePubKey(row.TweakedScriptKey)
+	return storedProofLocator(
+		row.GenesisAssetID, row.TweakedScriptKey, row.Outpoint,
+	)
+}
+
+// storedProofLocator builds the mirror locator returned by a proof query.
+func storedProofLocator(genesisAssetID, tweakedScriptKey,
+	outpoint []byte) (proof.Locator, error) {
+
+	scriptKey, err := btcec.ParsePubKey(tweakedScriptKey)
 	if err != nil {
 		return proof.Locator{}, fmt.Errorf("unable to parse script "+
 			"key: %w", err)
 	}
 
 	var op wire.OutPoint
-	err = readOutPoint(bytes.NewReader(row.Outpoint), 0, 0, &op)
+	err = readOutPoint(bytes.NewReader(outpoint), 0, 0, &op)
 	if err != nil {
 		return proof.Locator{}, fmt.Errorf("unable to decode anchor "+
 			"outpoint: %w", err)
 	}
 
 	var assetID asset.ID
-	copy(assetID[:], row.GenesisAssetID)
+	copy(assetID[:], genesisAssetID)
 
 	return proof.Locator{
 		AssetID:   &assetID,
@@ -58,94 +66,98 @@ func anchoredAssetLocator(
 }
 
 // ApplyReceiveReconfirm converges received state to a (re)confirmed
-// anchor: the chain transaction's recorded confirmation refreshes,
-// and every anchored asset's stored proof file has its tip proof
-// re-stamped with the witness's block context. Convergent — safe for
-// re-delivered signals and same-transaction re-confirmations in new
-// blocks alike. Returns the locators of the proofs it re-stamped.
+// anchor: the chain transaction's recorded confirmation refreshes, and every
+// stored proof containing that transaction has every occurrence re-stamped
+// through RestampStoredProofs. Convergent — safe for re-delivered signals
+// and same-transaction re-confirmations in new blocks alike. Returns the
+// locators of the proofs it re-stamped.
 func (a *AssetStore) ApplyReceiveReconfirm(ctx context.Context,
-	q *sqlc.Queries, anchorTxid chainhash.Hash,
-	blockHash chainhash.Hash, blockHeight, txIndex uint32,
-	header wire.BlockHeader,
-	merkle proof.TxMerkleProof) ([]proof.Locator, error) {
+	q *sqlc.Queries,
+	blockContext proof.VerifiedBlockContext) ([]proof.Locator, error) {
+
+	if blockContext == nil {
+		return nil, fmt.Errorf("verified block context is nil")
+	}
+	anchorTxid := blockContext.AnchorTxID()
+	blockHash := blockContext.BlockHash()
 
 	err := q.ConfirmChainAnchorTx(ctx, AnchorTxConf{
 		Txid:        anchorTxid[:],
 		BlockHash:   blockHash[:],
-		BlockHeight: sqlInt32(blockHeight),
-		TxIndex:     sqlInt32(txIndex),
+		BlockHeight: sqlInt32(blockContext.BlockHeight()),
+		TxIndex:     sqlInt32(blockContext.TxIndex()),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to confirm anchor tx: %w", err)
 	}
 
-	rows, err := q.AnchoredAssetsByAnchorTxPrefix(ctx, anchorTxid[:])
+	return a.RestampStoredProofs(ctx, q, blockContext)
+}
+
+// RestampStoredProofs refreshes every occurrence of a (re)confirmed anchor
+// transaction in every stored proof that contains it, at any depth, and
+// rebuilds each proof's provenance with its blob. Convergent: re-applying a
+// context already stored changes nothing. Returns the locators of the proofs
+// it re-stamped. Every site that learns of a confirmation applies it here,
+// so a transaction's history is repaired wherever it is held, whichever
+// site's stake sensed the confirmation.
+func (a *AssetStore) RestampStoredProofs(ctx context.Context,
+	q *sqlc.Queries,
+	blockContext proof.VerifiedBlockContext) ([]proof.Locator, error) {
+
+	if blockContext == nil {
+		return nil, fmt.Errorf("verified block context is nil")
+	}
+	anchorTxid := blockContext.AnchorTxID()
+
+	rows, err := q.FetchAssetProofsByAnchorTx(ctx, anchorTxid[:])
 	if err != nil {
-		return nil, fmt.Errorf("unable to find anchored assets: %w",
+		return nil, fmt.Errorf("unable to find affected proofs: %w",
 			err)
 	}
 
 	var restamped []proof.Locator
 	for _, row := range rows {
-		blob, err := q.AssetProofBlobByAssetID(ctx, row.AssetID)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			// The asset's proof file is not yet materialized.
-			// On the minting path the first witness delivery
-			// precedes the cultivator's confirmation branch —
-			// which this delivery itself unblocks, and which
-			// writes the proof with this same block context.
-			// Converge what exists; skip what doesn't.
-			continue
-
-		case err != nil:
-			return nil, fmt.Errorf("unable to fetch proof for "+
-				"asset %d: %w", row.AssetID, err)
-		}
-
-		file := &proof.File{}
-		if err := file.Decode(bytes.NewReader(blob)); err != nil {
+		// The decoder that indexed the blob reads it back, so a
+		// historical single-proof blob is repaired as a one-proof
+		// file and stored as a proof file from here on.
+		file, err := proof.Blob(row.ProofFile).AsFile()
+		if err != nil {
 			return nil, fmt.Errorf("unable to decode proof "+
 				"file: %w", err)
 		}
 
-		numProofs := file.NumProofs()
-		if numProofs == 0 {
-			continue
-		}
-		tip, err := file.ProofAt(uint32(numProofs - 1))
+		patched, err := file.RestampAnchor(blockContext)
 		if err != nil {
-			return nil, fmt.Errorf("unable to read tip proof: %w",
-				err)
+			return nil, fmt.Errorf(
+				"unable to restamp proof DAG: %w", err,
+			)
 		}
-		if tip.AnchorTx.TxHash() != anchorTxid {
-			continue
-		}
-
-		tip.BlockHeader = header
-		tip.BlockHeight = blockHeight
-		tip.TxMerkleProof = merkle
-		if err := file.ReplaceLastProof(*tip); err != nil {
-			return nil, fmt.Errorf("unable to replace tip "+
-				"proof: %w", err)
+		if patched.Matches() == 0 {
+			return nil, fmt.Errorf(
+				"proof %d provenance index names absent "+
+					"anchor transaction %v",
+				row.ProofID, anchorTxid,
+			)
 		}
 
-		var buf bytes.Buffer
-		if err := file.Encode(&buf); err != nil {
-			return nil, fmt.Errorf("unable to encode proof "+
-				"file: %w", err)
-		}
-
-		err = q.UpsertAssetProofByID(ctx, ProofUpdateByID{
-			AssetID:   row.AssetID,
-			ProofFile: buf.Bytes(),
-		})
+		indexedProof, err := NewIndexedProofFileFromRestamp(patched)
 		if err != nil {
-			return nil, fmt.Errorf("unable to store patched "+
-				"proof: %w", err)
+			return nil, fmt.Errorf(
+				"unable to index patched proof: %w", err,
+			)
+		}
+		if err := StoreIndexedAssetProof(
+			ctx, q, row.AssetID, indexedProof,
+		); err != nil {
+			return nil, fmt.Errorf(
+				"unable to store patched proof: %w", err,
+			)
 		}
 
-		loc, err := anchoredAssetLocator(row)
+		loc, err := storedProofLocator(
+			row.GenesisAssetID, row.TweakedScriptKey, row.Outpoint,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -264,6 +276,70 @@ func (a *AssetStore) ApplyReceiveAbandonment(ctx context.Context,
 // A compile-time assertion that the asset store provides the receive
 // site's persistence surface.
 var _ tapcustody.ReceiveAnchoringLog = (*AssetStore)(nil)
+
+// ProofsForAdoption returns every stored database proof whose tip may still
+// need protection: those anchored at or above the given block height, and
+// those whose anchor height the database does not know. The database,
+// rather than the file mirror, is authoritative for the state whose
+// protection is being repaired.
+func (a *AssetStore) ProofsForAdoption(ctx context.Context,
+	minBlockHeight uint32) ([]proof.Blob, error) {
+
+	var blobs []proof.Blob
+	readOpts := NewAssetStoreReadTx()
+	err := a.db.ExecTx(ctx, &readOpts, func(q ActiveAssetsStore) error {
+		rows, err := q.FetchAssetProofsForAdoption(
+			ctx, sqlInt32(minBlockHeight),
+		)
+		if err != nil {
+			return err
+		}
+
+		blobs = make([]proof.Blob, len(rows))
+		for idx := range rows {
+			blobs[idx] = rows[idx]
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fetching proofs for adoption: %w", err)
+	}
+
+	return blobs, nil
+}
+
+// ProofAnchorOwnership classifies the local state attached to one proof
+// transition so upgrade adoption preserves its native compensation semantics.
+func (a *AssetStore) ProofAnchorOwnership(ctx context.Context,
+	anchorTxid chainhash.Hash) (tapcustody.ProofAnchorOwnership, error) {
+
+	var ownership tapcustody.ProofAnchorOwnership
+	readOpts := NewAssetStoreReadTx()
+	err := a.db.ExecTx(ctx, &readOpts, func(q ActiveAssetsStore) error {
+		row, err := q.ProofAnchorSiteOwnership(ctx, anchorTxid[:])
+		if err != nil {
+			return err
+		}
+
+		ownership = tapcustody.ProofAnchorOwnership{
+			Mint:    row.MintOwned,
+			Porter:  row.PorterOwned,
+			Receive: row.ReceiveOwned,
+		}
+
+		return nil
+	})
+	if err != nil {
+		return ownership, fmt.Errorf(
+			"classifying proof anchor: %w", err,
+		)
+	}
+
+	return ownership, nil
+}
+
+var _ tapcustody.ProofAdoptionLog = (*AssetStore)(nil)
 
 // hasReceivedProof reports whether the database holds a proof for
 // exactly the asset the locator names. A script key alone is not an

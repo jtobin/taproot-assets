@@ -33,10 +33,10 @@ type ReceiveAnchoringLog interface {
 	// ApplyReceiveReconfirm converges received state to a
 	// (re)confirmed anchor, returning the locators of the proofs it
 	// re-stamped.
-	ApplyReceiveReconfirm(ctx context.Context, q *sqlc.Queries,
-		anchorTxid chainhash.Hash, blockHash chainhash.Hash,
-		blockHeight, txIndex uint32, header wire.BlockHeader,
-		merkle proof.TxMerkleProof) ([]proof.Locator, error)
+	ApplyReceiveReconfirm(
+		ctx context.Context, q *sqlc.Queries,
+		blockContext proof.VerifiedBlockContext,
+	) ([]proof.Locator, error)
 
 	// ApplyReceiveUnconfirm withdraws the recorded confirmation.
 	ApplyReceiveUnconfirm(ctx context.Context, q *sqlc.Queries,
@@ -69,6 +69,37 @@ type ReceiveAnchoringLog interface {
 	// NotifyProofs delivers imported proofs to the proof event
 	// subscribers, outside the transaction that stored them.
 	NotifyProofs(blobs ...proof.Blob)
+}
+
+// ProofAnchorOwnership records which local subsystems have durable state
+// staked on a proof transition. Mint and porter ownership require their own
+// compensation. Receive ownership is independent: a self-send, for example,
+// belongs to both the porter and an address event.
+type ProofAnchorOwnership struct {
+	Mint    bool
+	Porter  bool
+	Receive bool
+}
+
+// NeedsReceiveAdoption reports whether the transition belongs at the receive
+// site. A transition with no recognizable owner is treated as restored wallet
+// custody; recognized mint and porter state stays with its native site.
+func (o ProofAnchorOwnership) NeedsReceiveAdoption() bool {
+	return o.Receive || (!o.Mint && !o.Porter)
+}
+
+// ProofAdoptionLog is the read surface used by the one-shot upgrade adopter.
+// It is separate from ReceiveAnchoringLog so ordinary site tests and alternate
+// persistence implementations need not pretend to support database rollout.
+type ProofAdoptionLog interface {
+	// ProofsForAdoption returns the stored proof files whose tip may
+	// still need protection: those anchored at or above the given
+	// block height, and those whose anchor height is unknown.
+	ProofsForAdoption(ctx context.Context,
+		minBlockHeight uint32) ([]proof.Blob, error)
+
+	ProofAnchorOwnership(ctx context.Context,
+		anchorTxid chainhash.Hash) (ProofAnchorOwnership, error)
 }
 
 // VerifiedProofWriter is the proof-file mirror: it stores verified
@@ -181,15 +212,22 @@ func (s *receiveSite) reconfirm(ctx context.Context,
 		return err
 	}
 
-	witness, err := tapreorg.WitnessContext(anchoring, anchoring.Phase)
+	blockContext, err := tapreorg.VerifiedProofContext(
+		anchoring, anchoring.Phase,
+	)
 	if err != nil {
 		return err
 	}
+	if blockContext.AnchorTxID() != anchorTxid {
+		return fmt.Errorf(
+			"witness transaction %v does not match "+
+				"receive anchor %v",
+			blockContext.AnchorTxID(), anchorTxid,
+		)
+	}
 
 	restamped, err := s.custodian.cfg.AnchoringLog.ApplyReceiveReconfirm(
-		ctx, tx.Queries(), anchorTxid, witness.W.BlockHash(),
-		witness.W.Height(), witness.W.TxIndex(),
-		*witness.BlockHeader, *witness.MerkleProof,
+		ctx, tx.Queries(), blockContext,
 	)
 	if err != nil {
 		return err
@@ -364,9 +402,19 @@ func (c *Custodian) AnchoringSite() tapreorg.Site {
 func (c *Custodian) RegisterReceiveAnchoring(ctx context.Context,
 	file *proof.File, phase1 tapreorg.BatchPhase1Func) error {
 
-	specs, err := receiveRegistrationSpecs(
+	return c.registerReceiveAnchoring(ctx, file, nil, phase1)
+}
+
+// registerReceiveAnchoring is RegisterReceiveAnchoring with an optional set
+// of transaction identities owned by another local site. Exclusions are used
+// only by upgrade adoption; a new receive stakes its whole DAG normally.
+func (c *Custodian) registerReceiveAnchoring(ctx context.Context,
+	file *proof.File, excluded map[chainhash.Hash]struct{},
+	phase1 tapreorg.BatchPhase1Func) error {
+
+	specs, err := receiveRegistrationSpecsExcept(
 		file, c.cfg.AnchoringThreshold,
-		c.cfg.AnchoringWatcher.BestHeight(),
+		c.cfg.AnchoringWatcher.BestHeight(), excluded,
 	)
 	if err != nil {
 		return err
@@ -384,12 +432,188 @@ func (c *Custodian) RegisterReceiveAnchoring(ctx context.Context,
 	return nil
 }
 
+// AdoptProofs restores watcher coverage for proof files that predate atomic
+// staking. Native mint and porter anchors are excluded so their own startup
+// adoption retains the compensation semantics of the state they created.
+// Unknown anchors are ordinary proof custody and belong to the receive site.
+//
+// A file whose tip has crossed the safety depth holds nothing young: a
+// spender confirms no earlier than its inputs. Such files are neither
+// fetched, since the database is asked only for tips still within the
+// depth or of unknown height, nor read past their tip when the decoded
+// file says the same. Anchors the receive site already stakes are
+// skipped too, so a repeated pass registers nothing and re-delivers
+// nothing. A file whose contents cannot be adopted — undecodable, or a
+// young transition with nothing to stake on — is logged and left rather
+// than allowed to keep the daemon from starting; failures of the database
+// or the registry are returned, as is a context that ends mid-pass.
+func (c *Custodian) AdoptProofs(ctx context.Context) error {
+	if c.cfg.ProofAdoptionLog == nil {
+		return errors.New("proof adoption log is not configured")
+	}
+
+	// Only files whose tip is still young can hold anything to adopt,
+	// so the database is asked for those alone.
+	bestHeight := c.cfg.AnchoringWatcher.BestHeight()
+	blobs, err := c.cfg.ProofAdoptionLog.ProofsForAdoption(
+		ctx, tapreorg.ProtectionFloor(
+			bestHeight, c.cfg.AnchoringThreshold,
+		),
+	)
+	if err != nil {
+		return fmt.Errorf("unable to list proofs for adoption: %w", err)
+	}
+
+	var adopted, skipped int
+	for proofIdx, blob := range blobs {
+		// Decoding a file consults nothing that carries the context,
+		// so a shutdown is honoured between files.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		specs, err := c.adoptionSpecs(ctx, blob, bestHeight)
+		switch {
+		case errors.Is(err, errAdoptionData):
+			log.Warnf("Proof %d not adopted: %v", proofIdx, err)
+			skipped++
+			continue
+
+		case err != nil:
+			return fmt.Errorf("unable to adopt proof %d: %w",
+				proofIdx, err)
+
+		case len(specs) == 0:
+			continue
+		}
+
+		_, err = c.cfg.AnchoringWatcher.RegisterBatch(ctx, specs, nil)
+		if err != nil {
+			return fmt.Errorf("unable to adopt proof %d: %w",
+				proofIdx, err)
+		}
+		adopted++
+	}
+
+	if adopted > 0 || skipped > 0 {
+		log.Infof("Adopted %d proof file(s) into receive custody, "+
+			"skipped %d", adopted, skipped)
+	}
+
+	return nil
+}
+
+// errAdoptionData marks a proof file adoption cannot act on because of what
+// it contains, as opposed to a failure of the database or the registry.
+var errAdoptionData = errors.New("proof file cannot be adopted")
+
+// errAdoptionStore marks a failure of the persistence adoption consults
+// while classifying a file.
+var errAdoptionStore = errors.New("adoption persistence")
+
+// adoptionSpecs derives the registrations a stored file still needs: its
+// young anchors that no native site claims and that the receive site does
+// not already stake. Problems with the file itself are reported as
+// errAdoptionData.
+func (c *Custodian) adoptionSpecs(ctx context.Context, blob proof.Blob,
+	bestHeight uint32) ([]tapreorg.RegistrationSpec, error) {
+
+	file, err := blob.AsFile()
+	if err != nil {
+		return nil, fmt.Errorf("%w: decoding: %w", errAdoptionData, err)
+	}
+
+	// The tip is the file's youngest transition.
+	tip, err := file.LastProof()
+	if err != nil {
+		return nil, fmt.Errorf("%w: reading tip: %w", errAdoptionData,
+			err)
+	}
+	if !tapreorg.AnchorNeedsProtection(
+		bestHeight, tip.BlockHeight, c.cfg.AnchoringThreshold,
+	) {
+
+		return nil, nil
+	}
+
+	excluded := make(map[chainhash.Hash]struct{})
+	classified := make(map[chainhash.Hash]struct{})
+	err = walkReceiveProofDAG(file, func(current, _ *proof.Proof) error {
+		if !tapreorg.AnchorNeedsProtection(
+			bestHeight, current.BlockHeight,
+			c.cfg.AnchoringThreshold,
+		) {
+
+			return nil
+		}
+
+		txID := current.AnchorTx.TxHash()
+		if _, ok := classified[txID]; ok {
+			return nil
+		}
+		classified[txID] = struct{}{}
+
+		existing, err := c.cfg.AnchoringWatcher.LookupByMatchKey(
+			ctx, ReceiveSiteID, txID.CloneBytes(),
+		)
+		if err != nil {
+			return fmt.Errorf("%w: looking up anchor %v: %w",
+				errAdoptionStore, txID, err)
+		}
+		if existing != nil {
+			excluded[txID] = struct{}{}
+			return nil
+		}
+
+		ownership, err := c.cfg.ProofAdoptionLog.ProofAnchorOwnership(
+			ctx, txID,
+		)
+		if err != nil {
+			return fmt.Errorf("%w: classifying anchor %v: %w",
+				errAdoptionStore, txID, err)
+		}
+		if !ownership.NeedsReceiveAdoption() {
+			excluded[txID] = struct{}{}
+		}
+
+		return nil
+	})
+	switch {
+	case errors.Is(err, errAdoptionStore):
+		return nil, err
+
+	case err != nil:
+		return nil, fmt.Errorf("%w: classifying: %w", errAdoptionData,
+			err)
+	}
+
+	specs, err := receiveRegistrationSpecsExcept(
+		file, c.cfg.AnchoringThreshold, bestHeight, excluded,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errAdoptionData, err)
+	}
+
+	return specs, nil
+}
+
 // receiveRegistrationSpecs derives one transaction-level registration for
 // each young anchor in a proof DAG, in dependency-first order. Repeated proof
 // positions for one anchor transaction are folded into one registration whose
 // trigger set is the union of the evidence those positions carry.
 func receiveRegistrationSpecs(file *proof.File, threshold,
 	bestHeight uint32) ([]tapreorg.RegistrationSpec, error) {
+
+	return receiveRegistrationSpecsExcept(
+		file, threshold, bestHeight, nil,
+	)
+}
+
+// receiveRegistrationSpecsExcept is receiveRegistrationSpecs with an
+// ownership exclusion set used by the legacy adopter.
+func receiveRegistrationSpecsExcept(file *proof.File, threshold,
+	bestHeight uint32, excluded map[chainhash.Hash]struct{}) (
+	[]tapreorg.RegistrationSpec, error) {
 
 	if file.NumProofs() == 0 {
 		return nil, errors.New("empty proof file")
@@ -407,6 +631,11 @@ func receiveRegistrationSpecs(file *proof.File, threshold,
 			return nil
 		}
 
+		txID := current.AnchorTx.TxHash()
+		if _, skip := excluded[txID]; skip {
+			return nil
+		}
+
 		spec, err := receiveRegistrationSpecForProof(
 			current, previous, threshold,
 		)
@@ -414,7 +643,6 @@ func receiveRegistrationSpecs(file *proof.File, threshold,
 			return err
 		}
 
-		txID := current.AnchorTx.TxHash()
 		position, ok := positions[txID]
 		if !ok {
 			positions[txID] = len(specs)

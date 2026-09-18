@@ -192,6 +192,11 @@ func (p *ChainPorter) Start() error {
 	p.startOnce.Do(func() {
 		log.Infof("Starting ChainPorter")
 
+		startErr = p.adoptLegacyParcels()
+		if startErr != nil {
+			return
+		}
+
 		// Start the main chain porter goroutine.
 		p.Wg.Add(1)
 		go p.mainEventLoop()
@@ -200,6 +205,146 @@ func (p *ChainPorter) Start() error {
 	})
 
 	return startErr
+}
+
+// adoptLegacyParcels restores native porter ownership for confirmed transfers
+// written before anchoring registration existed. Pending transfers are left to
+// the ordinary resume path; finalized-depth transfers need no protection and
+// are not read, the database being asked only for transfers confirmed at or
+// above the protection floor.
+//
+// A transfer whose recorded confirmation cannot be reconstructed from the
+// chain, because its block re-orged out while the node was down or the
+// block fetch failed, is adopted without a seed and the sensor derives its
+// phase from the chain. Only registry and database failures keep the
+// porter from starting.
+func (p *ChainPorter) adoptLegacyParcels() error {
+	ctx, cancel := p.WithCtxQuitNoTimeout()
+	defer cancel()
+
+	bestHeight := p.cfg.AnchoringWatcher.BestHeight()
+	parcels, err := p.cfg.ExportLog.ParcelsForAdoption(
+		ctx, tapreorg.ProtectionFloor(
+			bestHeight, p.cfg.AnchoringThreshold,
+		),
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"unable to list parcels for adoption: %w", err,
+		)
+	}
+
+	blocks := make(map[uint32]*wire.MsgBlock)
+	for _, parcel := range parcels {
+		if parcel.AnchorTxBlockHeight == 0 ||
+			!tapreorg.AnchorNeedsProtection(
+				bestHeight, parcel.AnchorTxBlockHeight,
+				p.cfg.AnchoringThreshold,
+			) {
+
+			continue
+		}
+
+		anchorTxid := parcel.AnchorTx.TxHash()
+		existing, err := p.cfg.AnchoringWatcher.LookupByMatchKey(
+			ctx, PorterSiteID, anchorTxid.CloneBytes(),
+		)
+		if err != nil {
+			return fmt.Errorf(
+				"unable to look up legacy parcel %v: %w",
+				anchorTxid, err,
+			)
+		}
+		if existing != nil {
+			continue
+		}
+
+		var seed *tapreorg.CandidateSpend
+		candidate, err := p.confirmedParcelSeed(ctx, parcel, blocks)
+		if err != nil {
+			log.Warnf("Adopting legacy parcel %v without its "+
+				"recorded confirmation, leaving the sensor to "+
+				"derive its phase: %v", anchorTxid, err)
+		} else {
+			seed = &candidate
+		}
+
+		_, err = p.registerResumedParcelAnchoring(ctx, &sendPackage{
+			OutboundPkg: parcel,
+		}, seed)
+		if err != nil {
+			return fmt.Errorf(
+				"unable to adopt legacy parcel %v: %w",
+				anchorTxid, err,
+			)
+		}
+	}
+
+	return nil
+}
+
+// confirmedParcelSeed reconstructs the witness already represented by a
+// confirmed legacy transfer. Blocks are shared by height across the startup
+// pass, bounding chain reads by the young frontier rather than parcel count.
+func (p *ChainPorter) confirmedParcelSeed(ctx context.Context,
+	parcel *OutboundParcel, blocks map[uint32]*wire.MsgBlock) (
+	tapreorg.CandidateSpend, error) {
+
+	height := parcel.AnchorTxBlockHeight
+	block := blocks[height]
+	if block == nil {
+		var err error
+		block, err = p.cfg.ChainBridge.GetBlockByHeight(
+			ctx, int64(height),
+		)
+		if err != nil {
+			return tapreorg.CandidateSpend{}, err
+		}
+		blocks[height] = block
+	}
+
+	blockHash := block.BlockHash()
+	if expected := parcel.AnchorTxBlockHash; expected.IsSome() &&
+		expected.UnwrapOr(chainhash.Hash{}) != blockHash {
+
+		return tapreorg.CandidateSpend{}, fmt.Errorf(
+			"block at height %d is %v, expected %v", height,
+			blockHash, expected.UnwrapOr(chainhash.Hash{}))
+	}
+
+	anchorTxid := parcel.AnchorTx.TxHash()
+	txIndex := -1
+	for idx := range block.Transactions {
+		if block.Transactions[idx].TxHash() == anchorTxid {
+			txIndex = idx
+			break
+		}
+	}
+	if txIndex < 0 {
+		return tapreorg.CandidateSpend{}, fmt.Errorf(
+			"anchor transaction absent from block %v", blockHash)
+	}
+
+	merkle, err := proof.NewTxMerkleProof(block.Transactions, txIndex)
+	if err != nil {
+		return tapreorg.CandidateSpend{}, err
+	}
+	witness, err := tapreorg.NewWitness(
+		parcel.AnchorTx, blockHash, height, uint32(txIndex),
+	)
+	if err != nil {
+		return tapreorg.CandidateSpend{}, err
+	}
+
+	header := block.Header
+	return tapreorg.CandidateSpend{
+		W:            witness,
+		Verdict:      tapreorg.VerdictSatisfies,
+		OnChain:      true,
+		BlockHeader:  &header,
+		MerkleProof:  merkle,
+		ActCertified: false,
+	}, nil
 }
 
 // resumePendingParcels attempts to resume delivery for any pending parcels that

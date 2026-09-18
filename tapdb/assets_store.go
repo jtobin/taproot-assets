@@ -261,6 +261,17 @@ type ActiveAssetsStore interface {
 	// disk.
 	FetchAssetProofs(ctx context.Context) ([]AssetProof, error)
 
+	// FetchAssetProofsForAdoption fetches the proof files whose anchor
+	// transaction confirmed at or above the given height, or whose
+	// confirmation height is unknown.
+	FetchAssetProofsForAdoption(ctx context.Context,
+		minBlockHeight sql.NullInt32) ([][]byte, error)
+
+	// ProofAnchorSiteOwnership classifies local subsystem state bound to
+	// one proof anchor transaction.
+	ProofAnchorSiteOwnership(ctx context.Context,
+		anchorTxid []byte) (sqlc.ProofAnchorSiteOwnershipRow, error)
+
 	// FetchAssetProofsSizes fetches all the asset proofs lengths that are
 	// stored on disk.
 	FetchAssetProofsSizes(ctx context.Context) ([]AssetProofSize, error)
@@ -3724,16 +3735,30 @@ func (a *AssetStore) QueryParcels(ctx context.Context,
 
 	return a.queryParcelsWithFilters(
 		ctx, anchorTxHash, pendingOnly, time.Time{}, "", nil,
+		fn.None[uint32](),
+	)
+}
+
+// ParcelsForAdoption returns the confirmed parcels whose anchor transaction
+// may still need protection: those confirmed at or above the given block
+// height. Unconfirmed parcels are left to PendingParcels, and parcels
+// confirmed below the height are not read at all.
+func (a *AssetStore) ParcelsForAdoption(ctx context.Context,
+	minBlockHeight uint32) ([]*tapfreighter.OutboundParcel, error) {
+
+	return a.queryParcelsWithFilters(
+		ctx, nil, false, time.Time{}, "", nil, fn.Some(minBlockHeight),
 	)
 }
 
 // queryParcelsWithFilters returns the set of confirmed or unconfirmed parcels
-// with optional time, label, and script key filters applied at the database
-// level.
+// with optional time, label, script key and minimum confirmation height
+// filters applied at the database level.
 func (a *AssetStore) queryParcelsWithFilters(ctx context.Context,
 	anchorTxHash *chainhash.Hash, pendingOnly bool, startTime time.Time,
-	filterLabel string, filterScriptKey *btcec.PublicKey) (
-	[]*tapfreighter.OutboundParcel, error) {
+	filterLabel string, filterScriptKey *btcec.PublicKey,
+	minBlockHeight fn.Option[uint32]) ([]*tapfreighter.OutboundParcel,
+	error) {
 
 	var (
 		outboundParcels []*tapfreighter.OutboundParcel
@@ -3768,6 +3793,11 @@ func (a *AssetStore) queryParcelsWithFilters(ctx context.Context,
 			serializedKey := filterScriptKey.SerializeCompressed()
 			transferQuery.FilterScriptKey = serializedKey
 		}
+
+		// Add the minimum confirmation height if provided.
+		minBlockHeight.WhenSome(func(height uint32) {
+			transferQuery.MinBlockHeight = sqlInt32(height)
+		})
 
 		// Query for asset transfers with filters applied at database
 		// level.
@@ -3902,6 +3932,7 @@ func (a *AssetStore) QueryCompletedParcels(ctx context.Context,
 	// label and script key filters, then filter for truly completed ones.
 	allParcels, err := a.queryParcelsWithFilters(
 		ctx, nil, false, startTime, filterLabel, filterScriptKey,
+		fn.None[uint32](),
 	)
 	if err != nil {
 		return nil, err

@@ -44,6 +44,8 @@ func TestNewVerifiedBlockContext(t *testing.T) {
 	require.Equal(t, anchorProof.AnchorTx.TxHash(), context.AnchorTxID())
 	require.Equal(t, blockHeader.BlockHash(), context.BlockHash())
 	require.Equal(t, uint32(101), context.BlockHeight())
+	require.Equal(t, uint32(0), context.TxIndex())
+	require.Equal(t, blockHeader, context.BlockHeader())
 
 	blockHeader.MerkleRoot = chainhash.Hash{}
 	_, err = NewVerifiedBlockContext(
@@ -53,6 +55,13 @@ func TestNewVerifiedBlockContext(t *testing.T) {
 
 	_, err = NewVerifiedBlockContext(
 		nil, blockHeader, 101, *txMerkleProof,
+	)
+	require.ErrorIs(t, err, ErrInvalidTxMerkleProof)
+
+	_, err = NewVerifiedBlockContext(
+		&anchorProof.AnchorTx, blockHeader, 101, TxMerkleProof{
+			Nodes: []chainhash.Hash{{1}},
+		},
 	)
 	require.ErrorIs(t, err, ErrInvalidTxMerkleProof)
 }
@@ -116,8 +125,10 @@ func TestProofDAGRestampProperties(t *testing.T) {
 		)
 		require.NoError(rt, err)
 
-		matchCount, err := proofFile.RestampAnchor(context)
+		restamped, err := proofFile.RestampAnchor(context)
 		require.NoError(rt, err)
+		require.Equal(rt, expectedTxIDs, restamped.AnchorTxIDs())
+		matchCount := restamped.Matches()
 
 		after, err := flattenProofDAG(proofFile)
 		require.NoError(rt, err)
@@ -142,6 +153,7 @@ func TestProofDAGRestampProperties(t *testing.T) {
 
 		var encoded bytes.Buffer
 		require.NoError(rt, proofFile.Encode(&encoded))
+		require.Equal(rt, encoded.Bytes(), []byte(restamped.Blob()))
 		decoded := &File{}
 		reader := bytes.NewReader(encoded.Bytes())
 		require.NoError(rt, decoded.Decode(reader))
@@ -150,9 +162,9 @@ func TestProofDAGRestampProperties(t *testing.T) {
 		require.Equal(rt, after, decodedOccurrences)
 
 		// Restamping an already-current DAG has no observable effect.
-		matchCount, err = proofFile.RestampAnchor(context)
+		again, err := proofFile.RestampAnchor(context)
 		require.NoError(rt, err)
-		require.Equal(rt, expectedMatches, matchCount)
+		require.Equal(rt, expectedMatches, again.Matches())
 		var encodedAgain bytes.Buffer
 		require.NoError(rt, proofFile.Encode(&encodedAgain))
 		require.Equal(rt, encoded.Bytes(), encodedAgain.Bytes())

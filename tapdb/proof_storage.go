@@ -46,6 +46,52 @@ func NewIndexedProofFile(blob proof.Blob) (IndexedProofFile, error) {
 		return nil, fmt.Errorf("decoding proof blob: %w", err)
 	}
 
+	return indexedProofFileFromDecoded(blob, proofFile)
+}
+
+// NewIndexedProofFileFromFile binds a decoded proof file to its complete
+// provenance index without decoding it a second time.
+func NewIndexedProofFileFromFile(
+	proofFile *proof.File) (IndexedProofFile, error) {
+
+	if proofFile == nil {
+		return nil, fmt.Errorf("proof file is nil")
+	}
+
+	var encoded bytes.Buffer
+	if err := proofFile.Encode(&encoded); err != nil {
+		return nil, fmt.Errorf("encoding proof file: %w", err)
+	}
+
+	return indexedProofFileFromDecoded(encoded.Bytes(), proofFile)
+}
+
+// NewIndexedProofFileFromRestamp binds a restamped file to the anchors its
+// own traversal visited, sparing the second traversal
+// NewIndexedProofFileFromFile would make. Only proof.RestampAnchor can
+// produce the argument, so the pairing is the traversal's.
+func NewIndexedProofFileFromRestamp(
+	restamped *proof.Restamped) (IndexedProofFile, error) {
+
+	if restamped == nil {
+		return nil, fmt.Errorf("restamped proof file is nil")
+	}
+	blob := restamped.Blob()
+	if len(blob) == 0 {
+		return nil, fmt.Errorf("restamped proof file is empty")
+	}
+
+	return &indexedProofFile{
+		blob: append(proof.Blob(nil), blob...),
+		txIDs: append(
+			[]chainhash.Hash(nil), restamped.AnchorTxIDs()...,
+		),
+	}, nil
+}
+
+func indexedProofFileFromDecoded(blob proof.Blob,
+	proofFile *proof.File) (IndexedProofFile, error) {
+
 	txIDs, err := proofFile.AnchorTxIDs()
 	if err != nil {
 		return nil, fmt.Errorf("indexing proof DAG: %w", err)

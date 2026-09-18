@@ -232,6 +232,10 @@ type Config struct {
 	// receive site drives from its watcher handlers.
 	AnchoringLog ReceiveAnchoringLog
 
+	// ProofAdoptionLog enumerates proofs written before atomic staking
+	// existed and classifies local subsystem ownership of their anchors.
+	ProofAdoptionLog ProofAdoptionLog
+
 	// AnchoringThreshold is the confirmation depth at which the
 	// receive side considers a transfer act-confirmed (buried).
 	AnchoringThreshold uint32

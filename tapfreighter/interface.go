@@ -697,6 +697,12 @@ type ExportLog interface {
 	QueryParcels(ctx context.Context, anchorTxHash *chainhash.Hash,
 		pending bool) ([]*OutboundParcel, error)
 
+	// ParcelsForAdoption returns the confirmed parcels whose anchor
+	// transaction may still need protection: those confirmed at or
+	// above the given block height.
+	ParcelsForAdoption(ctx context.Context, minBlockHeight uint32) (
+		[]*OutboundParcel, error)
+
 	// QueryCompletedParcels returns the set of completed parcels that were
 	// transferred after the given start time, optionally filtered by label
 	// and/or script key.

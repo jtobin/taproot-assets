@@ -885,18 +885,31 @@ func (q *Queries) FetchAssetProofs(ctx context.Context) ([]FetchAssetProofsRow, 
 
 const FetchAssetProofsByAnchorTx = `-- name: FetchAssetProofsByAnchorTx :many
 SELECT asset_proofs.proof_id, asset_proofs.asset_id,
-       asset_proofs.proof_file
+       asset_proofs.proof_file, genesis_assets.asset_id AS genesis_asset_id,
+       script_keys.tweaked_script_key, managed_utxos.outpoint
 FROM asset_proof_anchors
 JOIN asset_proofs
     ON asset_proofs.proof_id = asset_proof_anchors.proof_id
+JOIN assets
+    ON assets.asset_id = asset_proofs.asset_id
+JOIN genesis_assets
+    ON genesis_assets.gen_asset_id = assets.genesis_id
+JOIN script_keys
+    ON script_keys.script_key_id = assets.script_key_id
+JOIN managed_utxos
+    ON managed_utxos.utxo_id = assets.anchor_utxo_id
 WHERE asset_proof_anchors.anchor_txid = $1
   AND asset_proofs.provenance_indexed = TRUE
+ORDER BY asset_proofs.proof_id
 `
 
 type FetchAssetProofsByAnchorTxRow struct {
-	ProofID   int64
-	AssetID   int64
-	ProofFile []byte
+	ProofID          int64
+	AssetID          int64
+	ProofFile        []byte
+	GenesisAssetID   []byte
+	TweakedScriptKey []byte
+	Outpoint         []byte
 }
 
 func (q *Queries) FetchAssetProofsByAnchorTx(ctx context.Context, anchorTxid []byte) ([]FetchAssetProofsByAnchorTxRow, error) {
@@ -908,7 +921,14 @@ func (q *Queries) FetchAssetProofsByAnchorTx(ctx context.Context, anchorTxid []b
 	var items []FetchAssetProofsByAnchorTxRow
 	for rows.Next() {
 		var i FetchAssetProofsByAnchorTxRow
-		if err := rows.Scan(&i.ProofID, &i.AssetID, &i.ProofFile); err != nil {
+		if err := rows.Scan(
+			&i.ProofID,
+			&i.AssetID,
+			&i.ProofFile,
+			&i.GenesisAssetID,
+			&i.TweakedScriptKey,
+			&i.Outpoint,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1005,6 +1025,44 @@ func (q *Queries) FetchAssetProofsByIDs(ctx context.Context, assetIds []int64) (
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const FetchAssetProofsForAdoption = `-- name: FetchAssetProofsForAdoption :many
+SELECT asset_proofs.proof_file
+FROM asset_proofs
+JOIN assets
+    ON assets.asset_id = asset_proofs.asset_id
+LEFT JOIN managed_utxos
+    ON managed_utxos.utxo_id = assets.anchor_utxo_id
+LEFT JOIN chain_txns
+    ON chain_txns.txn_id = managed_utxos.txn_id
+WHERE chain_txns.block_height IS NULL
+   OR chain_txns.block_height = 0
+   OR chain_txns.block_height >= $1
+ORDER BY asset_proofs.proof_id
+`
+
+func (q *Queries) FetchAssetProofsForAdoption(ctx context.Context, minBlockHeight sql.NullInt32) ([][]byte, error) {
+	rows, err := q.db.QueryContext(ctx, FetchAssetProofsForAdoption, minBlockHeight)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var proof_file []byte
+		if err := rows.Scan(&proof_file); err != nil {
+			return nil, err
+		}
+		items = append(items, proof_file)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -2785,6 +2843,51 @@ func (q *Queries) NewMintingBatch(ctx context.Context, arg NewMintingBatchParams
 		arg.UniverseCommitments,
 	)
 	return err
+}
+
+const ProofAnchorSiteOwnership = `-- name: ProofAnchorSiteOwnership :one
+SELECT
+    EXISTS (
+        SELECT 1
+        FROM asset_minting_batches batches
+        JOIN genesis_points points
+          ON points.genesis_id = batches.genesis_id
+        JOIN chain_txns txns
+          ON txns.txn_id = points.anchor_tx_id
+        WHERE txns.txid = $1
+    ) AS mint_owned,
+    EXISTS (
+        SELECT 1
+        FROM asset_transfers transfers
+        JOIN chain_txns txns
+          ON txns.txn_id = transfers.anchor_txn_id
+        WHERE txns.txid = $1
+          AND transfers.abandoned = FALSE
+    ) AS porter_owned,
+    EXISTS (
+        SELECT 1
+        FROM addr_event_proofs event_proofs
+        JOIN asset_proof_anchors anchors
+          ON anchors.proof_id = event_proofs.asset_proof_id
+        WHERE anchors.anchor_txid = $1
+    ) AS receive_owned
+`
+
+type ProofAnchorSiteOwnershipRow struct {
+	MintOwned    bool
+	PorterOwned  bool
+	ReceiveOwned bool
+}
+
+// Classify local subsystem state staked on one proof transition. Mint and
+// porter rows require their own compensation. An address-event reference is
+// independently receive-owned, including for a self-send that is also owned
+// by the porter.
+func (q *Queries) ProofAnchorSiteOwnership(ctx context.Context, anchorTxid []byte) (ProofAnchorSiteOwnershipRow, error) {
+	row := q.db.QueryRowContext(ctx, ProofAnchorSiteOwnership, anchorTxid)
+	var i ProofAnchorSiteOwnershipRow
+	err := row.Scan(&i.MintOwned, &i.PorterOwned, &i.ReceiveOwned)
+	return i, err
 }
 
 const QueryAssetBalancesByAsset = `-- name: QueryAssetBalancesByAsset :many

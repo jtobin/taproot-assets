@@ -690,6 +690,32 @@ func (c *ChainPlanter) Start() error {
 
 			log.Infof("Launching Cultivator(%x)", batchKey)
 			cultivator := c.newCultivatorForBatch(batch, nil)
+			if batch.State() == BatchStateConfirmed {
+				signedTx, err := psbt.Extract(
+					batch.GenesisPacket.Pkt,
+				)
+				if err != nil {
+					startErr = fmt.Errorf(
+						"unable to extract "+
+							"legacy confirmed "+
+							"batch "+
+							"transaction: %w", err,
+					)
+					return
+				}
+
+				err = cultivator.registerMintAnchoring(
+					ctx, signedTx,
+				)
+				if err != nil {
+					startErr = fmt.Errorf(
+						"unable to adopt "+
+							"legacy confirmed "+
+							"batch: %w", err,
+					)
+					return
+				}
+			}
 			if err := cultivator.Start(); err != nil {
 				startErr = err
 				return

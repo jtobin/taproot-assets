@@ -2638,10 +2638,10 @@ func (r *RPCServer) ImportProof(ctx context.Context,
 		return nil, fmt.Errorf("error extracting last proof: %w", err)
 	}
 
-	// Now that we know the proof file is at least present, we'll attempt
-	// to import it into the main archive.
-	err = r.cfg.ProofArchive.ImportProofs(
-		ctx, r.ProofVerifierCtx(ctx), false, &proof.AnnotatedProof{
+	// Import through the custody boundary so the asset and all young
+	// transactions in its provenance are staked atomically.
+	err = r.cfg.AssetCustodian.StakeReceive(
+		ctx, &proof.AnnotatedProof{
 			Locator: proof.Locator{
 				AssetID:   fn.Ptr(lastProof.Asset.ID()),
 				ScriptKey: *lastProof.Asset.ScriptKey.PubKey,
@@ -12632,6 +12632,7 @@ func (r *RPCServer) ImportAssetsFromBackup(ctx context.Context,
 		SpendChecker:   r.cfg.Lnd.ChainNotifier,
 		ChainQuerier:   r.cfg.ChainBridge,
 		ProofArchive:   r.cfg.ProofArchive,
+		ProofStaker:    r.cfg.AssetCustodian,
 		KeyRegistrar:   r.cfg.TapAddrBook,
 		ProofVerifier:  r.ProofVerifierCtx(ctx),
 		KeyDeriver:     r.cfg.Lnd.WalletKit,

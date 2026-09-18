@@ -66,8 +66,7 @@ func newCascadeReceiveLog() *cascadeReceiveLog {
 }
 
 func (l *cascadeReceiveLog) ApplyReceiveReconfirm(context.Context,
-	*sqlc.Queries, chainhash.Hash, chainhash.Hash, uint32, uint32,
-	wire.BlockHeader, proof.TxMerkleProof) ([]proof.Locator, error) {
+	*sqlc.Queries, proof.VerifiedBlockContext) ([]proof.Locator, error) {
 
 	return nil, nil
 }

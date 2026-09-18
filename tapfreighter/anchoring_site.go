@@ -49,6 +49,13 @@ type AnchoringLog interface {
 		conf *AssetConfirmEvent,
 		burns []*AssetBurn) ([]OutputIdentifier, error)
 
+	// RestampStoredProofs refreshes every occurrence of the confirmed
+	// anchor transaction in every stored proof that contains it, and
+	// returns the locators of the proofs it re-stamped.
+	RestampStoredProofs(ctx context.Context, q *sqlc.Queries,
+		blockContext proof.VerifiedBlockContext) ([]proof.Locator,
+		error)
+
 	// ApplyAnchorTxUnconfirm withdraws the recorded confirmation:
 	// the potency-tier soft downgrade.
 	ApplyAnchorTxUnconfirm(ctx context.Context, q *sqlc.Queries,
@@ -240,6 +247,25 @@ func (s *porterSite) applyConfirm(ctx context.Context,
 			rewritten = append(rewritten, p.Locator)
 		}
 	}
+
+	// The rebuild above produced the files this transfer owns. Other
+	// stored files carry the transaction in their history — later
+	// transfers built on its outputs, holdings received back through it
+	// — and a re-confirmation must reach every one of those occurrences
+	// too, whatever order the watcher delivers the transfers in.
+	blockContext, err := tapreorg.VerifiedProofContext(
+		anchoring, anchoring.Phase,
+	)
+	if err != nil {
+		return err
+	}
+	restamped, err := s.porter.cfg.AnchoringLog.RestampStoredProofs(
+		ctx, q, blockContext,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to repair held history: %w", err)
+	}
+	rewritten = append(rewritten, restamped...)
 
 	return enqueueMirrorSync(
 		ctx, tx, anchoring, proof.MirrorSyncRewrite, rewritten,
@@ -610,7 +636,8 @@ func (p *ChainPorter) inputAnchorScript(ctx context.Context,
 // recoverable from durable transfer state, so burn supply events
 // rebuilt for an adopted parcel lose the user's description.
 func (p *ChainPorter) registerResumedParcelAnchoring(ctx context.Context,
-	pkg *sendPackage) (tapreorg.AnchoringID, error) {
+	pkg *sendPackage, seed *tapreorg.CandidateSpend) (
+	tapreorg.AnchoringID, error) {
 
 	parcel := pkg.OutboundPkg
 
@@ -627,14 +654,14 @@ func (p *ChainPorter) registerResumedParcelAnchoring(ctx context.Context,
 	blob := encodePorterBlob(porterBlob{
 		AnchorTxid: anchorTxid,
 	})
-
 	return p.cfg.AnchoringWatcher.Register(ctx, tapreorg.RegistrationSpec{
-		Site:      PorterSiteID,
-		Triggers:  triggers,
-		MatchData: blob,
-		Payload:   blob,
-		MatchKey:  anchorTxid.CloneBytes(),
-		Threshold: p.cfg.AnchoringThreshold,
+		Site:          PorterSiteID,
+		Triggers:      triggers,
+		MatchData:     blob,
+		Payload:       blob,
+		MatchKey:      anchorTxid.CloneBytes(),
+		Threshold:     p.cfg.AnchoringThreshold,
+		SeedCandidate: seed,
 	}, nil)
 }
 
@@ -669,7 +696,9 @@ func (p *ChainPorter) waitForAnchoringOutcome(ctx context.Context,
 		// any other instead of failing terminally on every
 		// restart with its inputs leased.
 		case errors.Is(err, ErrNoParcelAnchoring):
-			id, err := p.registerResumedParcelAnchoring(ctx, pkg)
+			id, err := p.registerResumedParcelAnchoring(
+				ctx, pkg, nil,
+			)
 			if err != nil {
 				return nil, fmt.Errorf("unable to adopt "+
 					"resumed parcel: %w", err)
