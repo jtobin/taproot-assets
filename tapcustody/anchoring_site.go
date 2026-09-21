@@ -876,6 +876,20 @@ func receiveRegistrationSpecForProof(current, previous *proof.Proof,
 func (c *Custodian) StakeReceive(ctx context.Context,
 	annotated *proof.AnnotatedProof) error {
 
+	return c.StakeReceiveWithGroupVerifier(ctx, annotated, nil)
+}
+
+// StakeReceiveWithGroupVerifier is StakeReceive with the caller's group
+// verifier in place of the configured one. A restore into a wallet that has
+// never seen an asset group can prove the group only from the genesis reveal
+// in the proofs it restores; the caller narrows its verifier to keys derived
+// from those reveals, which the same verification pass checks. Header,
+// merkle and chain verification stay the custodian's. A nil verifier means
+// the configured one.
+func (c *Custodian) StakeReceiveWithGroupVerifier(ctx context.Context,
+	annotated *proof.AnnotatedProof,
+	groupVerifier proof.GroupVerifier) error {
+
 	file, err := annotated.Blob.AsFile()
 	if err != nil {
 		return fmt.Errorf("unable to decode proof file: %w", err)
@@ -908,7 +922,7 @@ func (c *Custodian) StakeReceive(ctx context.Context,
 		verifier = &proof.BaseVerifier{}
 	}
 	verified, err := proof.VerifyAnnotatedProofsWithVerifier(
-		ctx, verifier, c.verifierCtx(ctx), annotated,
+		ctx, verifier, c.verifierCtx(ctx, groupVerifier), annotated,
 	)
 	if err != nil {
 		return fmt.Errorf("unable to verify received proof: %w", err)

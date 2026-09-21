@@ -494,6 +494,16 @@ func (p *ChainPorter) findAnchoring(ctx context.Context,
 	return anchoring, nil
 }
 
+// RegisterParcel stakes an outbound parcel on its anchor transaction
+// confirming, as the porter does before broadcasting one it built: the
+// anchoring registration and the pending-parcel write commit in one
+// transaction. The trigger scripts are read from the inputs' proof files.
+func (p *ChainPorter) RegisterParcel(ctx context.Context,
+	parcel *OutboundParcel) (tapreorg.AnchoringID, error) {
+
+	return p.registerParcelAnchoring(ctx, &sendPackage{OutboundPkg: parcel})
+}
+
 // registerParcelAnchoring stakes the parcel on its anchor transaction
 // confirming: the anchoring registration and the pending-parcel write
 // commit in one transaction.

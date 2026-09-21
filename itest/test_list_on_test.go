@@ -140,6 +140,11 @@ var allTestCases = []*testCase{
 		test:           testReOrgMintAndSend,
 		reOrgSafeDepth: 6,
 	},
+	{
+		name:           "re-org nested history",
+		test:           testReOrgNestedHistory,
+		reOrgSafeDepth: 6,
+	},
 	// The act gate itself, at a depth where it is not vacuous: the
 	// rest of the suite runs at depth 1, where burial coincides with
 	// the first confirmation.

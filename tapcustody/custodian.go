@@ -1958,14 +1958,19 @@ func EventMatchesProof(event *address.Event, p *proof.Proof) bool {
 }
 
 // verifierCtx returns a verifier context that can be used to verify proofs.
-func (c *Custodian) verifierCtx(ctx context.Context) proof.VerifierCtx {
+func (c *Custodian) verifierCtx(ctx context.Context,
+	groupVerifier proof.GroupVerifier) proof.VerifierCtx {
+
 	headerVerifier := tapnode.GenHeaderVerifier(ctx, c.cfg.ChainBridge)
 	merkleVerifier := proof.DefaultMerkleVerifier
+	if groupVerifier == nil {
+		groupVerifier = c.cfg.GroupVerifier
+	}
 
 	return proof.VerifierCtx{
 		HeaderVerifier: headerVerifier,
 		MerkleVerifier: merkleVerifier,
-		GroupVerifier:  c.cfg.GroupVerifier,
+		GroupVerifier:  groupVerifier,
 		ChainLookupGen: c.cfg.ChainBridge,
 		IgnoreChecker:  c.cfg.IgnoreChecker,
 	}

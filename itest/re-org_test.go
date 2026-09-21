@@ -14,6 +14,7 @@ import (
 	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/lightninglabs/taproot-assets/asset"
 	"github.com/lightninglabs/taproot-assets/fn"
+	"github.com/lightninglabs/taproot-assets/proof"
 	"github.com/lightninglabs/taproot-assets/rpcutils"
 	"github.com/lightninglabs/taproot-assets/taprpc"
 	"github.com/lightninglabs/taproot-assets/taprpc/mintrpc"
@@ -719,6 +720,202 @@ func testReOrgMintAndSend(t *harnessTest) {
 		a := bobAssets.Assets[idx]
 		AssertAssetProofs(t.t, secondTapd, bobChainClient, a)
 	}
+}
+
+// testReOrgNestedHistory tests a re-org over a history the proof DAG
+// nests. Bob receives two outputs of one asset, the second carved from
+// the first send's change, and spends both in one transfer back to
+// Alice, so Alice's proof file carries the second input's history
+// nested inside its tip. A re-org then moves all three transfers, and
+// the repair must reach the occurrences inside the nested file as well
+// as those on the main lineage: every transfer in Alice's file sits in
+// the new block at every depth, the file verifies against the chain,
+// and the holding can be sent on.
+func testReOrgNestedHistory(t *harnessTest) {
+	ctx := context.Background()
+
+	// Bob's lnd node is created before the temporary miner, since
+	// creating it mines a block.
+	lndBob := t.lndHarness.NewNodeWithCoins("Bob", nil)
+	lndMiner := t.lndHarness.Miner()
+
+	// Mint and bury the mint: the fork under test starts past it, so
+	// the re-org targets only the transfers.
+	mintRequests := []*mintrpc.MintAssetRequest{issuableAssets[0]}
+	assetList := MintAssetsConfirmBatch(
+		t.t, lndMiner, t.tapd, mintRequests, WithNoUniverseLeafWait(),
+	)
+	t.lndHarness.MineBlocks(6)
+	WaitForMintUniverseLeaves(t.t, t.tapd, assetList)
+
+	secondTapd := setupTapdHarness(
+		t.t, t, lndBob, t.universeServer,
+		func(params *tapdHarnessParams) {
+			params.reOrgSafeDepth = 6
+		},
+	)
+	defer func() {
+		require.NoError(t.t, secondTapd.stop(!*noDelete))
+	}()
+
+	tempMiner := spawnTempMiner(t.t, t, ctx)
+
+	minted := assetList[0]
+	assetID := minted.AssetGenesis.AssetId
+
+	// send moves an amount between the nodes through an address and
+	// confirms it, returning the anchor transaction's hash.
+	send := func(from, to *tapdHarness, amount, change uint64,
+		transferIdx, inbound int) chainhash.Hash {
+
+		addr, err := to.NewAddr(ctx, &taprpc.NewAddrRequest{
+			AssetId: assetID,
+			Amt:     amount,
+		})
+		require.NoError(t.t, err)
+		AssertAddrCreated(t.t, to, minted, addr)
+		sendResp, _ := sendAssetsToAddr(t, from, addr)
+		ConfirmAndAssertOutboundTransfer(
+			t.t, lndMiner, from, sendResp, assetID,
+			[]uint64{change, amount}, transferIdx, transferIdx+1,
+		)
+		AssertNonInteractiveRecvComplete(t.t, to, inbound)
+
+		txid, err := chainhash.NewHash(sendResp.Transfer.AnchorTxHash)
+		require.NoError(t.t, err)
+
+		return *txid
+	}
+
+	// Two sends give Bob two outputs of the asset; the second spends
+	// the first send's change, so Bob's second file holds the first
+	// send in its history too.
+	const firstAmount, secondAmount = uint64(400), uint64(100)
+	firstTxid := send(
+		t.tapd, secondTapd, firstAmount, minted.Amount-firstAmount,
+		0, 1,
+	)
+	secondTxid := send(
+		t.tapd, secondTapd, secondAmount,
+		minted.Amount-firstAmount-secondAmount, 1, 2,
+	)
+	AssertBalances(
+		t.t, secondTapd, firstAmount+secondAmount,
+		WithAssetID(assetID), WithNumUtxos(2),
+	)
+
+	// Bob sends both outputs back to Alice in one transfer: a merge,
+	// whose proof nests the second input's file.
+	mergeTxid := send(
+		secondTapd, t.tapd, firstAmount+secondAmount, 0, 0, 1,
+	)
+	transfers := map[chainhash.Hash]struct{}{
+		firstTxid: {}, secondTxid: {}, mergeTxid: {},
+	}
+
+	listAssetRequest := &taprpc.ListAssetRequest{}
+	received := func() *taprpc.Asset {
+		assets, err := t.tapd.ListAssets(ctx, listAssetRequest)
+		require.NoError(t.t, err)
+		for _, a := range assets.Assets {
+			if a.Amount == firstAmount+secondAmount {
+				return a
+			}
+		}
+		require.Fail(t.t, "received asset not listed")
+
+		return nil
+	}
+	exportFile := func(a *taprpc.Asset) *proof.File {
+		exportResp, err := t.tapd.ExportProof(
+			ctx, &taprpc.ExportProofRequest{
+				AssetId:   assetID,
+				ScriptKey: a.ScriptKey,
+			},
+		)
+		require.NoError(t.t, err)
+		file, err := proof.Blob(exportResp.RawProofFile).AsFile()
+		require.NoError(t.t, err)
+
+		return file
+	}
+
+	// The received file nests the second input's history at its tip.
+	merged := received()
+	tip, err := exportFile(merged).LastProof()
+	require.NoError(t.t, err)
+	require.Len(t.t, tip.AdditionalInputs, 1)
+
+	// The fork drops all three transfers; they return to the mempool
+	// and both nodes stop listing the assets they anchor.
+	generateReOrg(t.t, t.lndHarness, tempMiner, 5, 2)
+	lndMiner.AssertNumTxsInMempool(3)
+
+	_, tempMinerHeight := tempMiner.GetBestBlock()
+	t.lndHarness.WaitForNodeBlockHeight(t.tapd.cfg.LndNode, tempMinerHeight)
+	t.lndHarness.WaitForNodeBlockHeight(lndBob, tempMinerHeight)
+	require.Eventually(t.t, func() bool {
+		assets, err := t.tapd.ListAssets(ctx, listAssetRequest)
+		return err == nil && len(assets.Assets) == 0
+	}, defaultWaitTimeout, 200*time.Millisecond)
+
+	// All three re-confirm in one block.
+	newBlock := t.lndHarness.MineBlocksAndAssertNumTxes(1, 3)[0]
+	_, newBlockHeight := lndMiner.GetBestBlock()
+	t.Logf("Transfers re-mined in block %v", newBlock.BlockHash())
+
+	require.Eventually(t.t, func() bool {
+		assets, err := t.tapd.ListAssets(ctx, listAssetRequest)
+		return err == nil && len(assets.Assets) == 2
+	}, defaultWaitTimeout, 200*time.Millisecond)
+	merged = received()
+	WaitForProofUpdate(t.t, t.tapd, merged, newBlockHeight)
+
+	// Every occurrence of a transfer in the received file, at any
+	// depth, now sits in the new block: the merge at the tip, the
+	// first send below it, and the first and second sends inside the
+	// nested input file.
+	var occurrences int
+	var walk func(file *proof.File)
+	walk = func(file *proof.File) {
+		for idx := 0; idx < file.NumProofs(); idx++ {
+			p, err := file.ProofAt(uint32(idx))
+			require.NoError(t.t, err)
+			for inputIdx := range p.AdditionalInputs {
+				walk(&p.AdditionalInputs[inputIdx])
+			}
+
+			txid := p.AnchorTx.TxHash()
+			if _, ok := transfers[txid]; !ok {
+				continue
+			}
+			occurrences++
+			require.EqualValues(
+				t.t, newBlockHeight, p.BlockHeight,
+				"transfer %v stale at depth %d", txid, idx,
+			)
+		}
+	}
+	walk(exportFile(merged))
+	require.Equal(t.t, 4, occurrences)
+
+	// The file verifies against the chain as it is now.
+	aliceChainClient := t.tapd.cfg.LndNode.RPC.ChainKit
+	AssertAssetProofs(t.t, t.tapd, aliceChainClient, merged)
+
+	// Bury the transfers, then spend the whole holding on to Bob: the
+	// repaired history, nested part included, is what Bob verifies.
+	t.lndHarness.MineBlocks(8)
+	send(t.tapd, secondTapd, minted.Amount, 0, 2, 3)
+	AssertBalances(
+		t.t, secondTapd, minted.Amount, WithAssetID(assetID),
+		WithNumUtxos(1),
+	)
+	bobAssets, err := secondTapd.ListAssets(ctx, listAssetRequest)
+	require.NoError(t.t, err)
+	require.Len(t.t, bobAssets.Assets, 1)
+	bobChainClient := secondTapd.cfg.LndNode.RPC.ChainKit
+	AssertAssetProofs(t.t, secondTapd, bobChainClient, bobAssets.Assets[0])
 }
 
 // spawnTempMiner creates a temporary miner that uses the same chain backend
