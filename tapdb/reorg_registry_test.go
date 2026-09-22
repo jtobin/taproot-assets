@@ -499,8 +499,8 @@ func TestReorgRegistryHandlerAtomicity(t *testing.T) {
 }
 
 // TestReorgRegistryDependencies exercises automatic edge derivation,
-// the withdrawal guard, cascade foreclosure on abandonment, and the
-// child's resulting derivation.
+// cascade foreclosure on abandonment, and the child's resulting
+// derivation.
 func TestReorgRegistryDependencies(t *testing.T) {
 	t.Parallel()
 
@@ -541,10 +541,6 @@ func TestReorgRegistryDependencies(t *testing.T) {
 	require.Equal(t, childID, edges[0].Child)
 	require.Equal(t, wP.TxHash(), edges[0].ParentWitnessTxHash)
 	require.True(t, edges[0].Foreclosure.IsNone())
-
-	// A parent with live dependents cannot be withdrawn.
-	err = store.Withdraw(ctx, parentID, nil)
-	require.ErrorIs(t, err, tapreorg.ErrLiveDependents)
 
 	// A foreign spend of the parent's trigger buries; the parent
 	// abandons, and its delivery forecloses the child's edge in
@@ -595,37 +591,6 @@ func TestReorgRegistryDependencies(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, parentID, cause.Parent)
 	require.Equal(t, wF.TxHash(), cause.W.TxHash())
-
-	// Terminal anchorings cannot be withdrawn.
-	require.NoError(t, store.SetPhase(ctx, childID, childPhase))
-	err = store.Withdraw(ctx, childID, nil)
-	require.ErrorIs(t, err, tapreorg.ErrTerminalPhase)
-	err = store.Withdraw(ctx, parentID, nil)
-	require.ErrorIs(t, err, tapreorg.ErrTerminalPhase)
-
-	// A live, dependent-free anchoring withdraws cleanly, sensed
-	// and delivered advancing together.
-	loneID, err := store.Register(
-		ctx, testSpec(t, "porter", testOutPoint(9, 1)), 700, nil, nil,
-	)
-	require.NoError(t, err)
-	require.NoError(t, store.Withdraw(
-		ctx, loneID,
-		func(ctx context.Context,
-			tx tapreorg.RegistryTx) error {
-
-			return tx.EnqueueEffect(
-				ctx, testEffect(loneID, "undo"),
-			)
-		},
-	))
-
-	lone, err := store.GetAnchoring(ctx, loneID)
-	require.NoError(t, err)
-	require.True(t, tapreorg.PhaseEqual(tapreorg.Withdrawn{}, lone.Phase))
-	require.True(t, tapreorg.PhaseEqual(
-		tapreorg.Withdrawn{}, lone.DeliveredPhase,
-	))
 }
 
 // TestReorgRegistryEdgesBeforeParentObserved pins the ordinary
@@ -660,8 +625,7 @@ func TestReorgRegistryEdgesBeforeParentObserved(t *testing.T) {
 	require.Empty(t, edges)
 
 	// The parent's satisfying candidate wP is recorded (its first
-	// confirmation): the child's edge derives now, pinned to wP,
-	// and the live-dependent withdrawal guard holds from here on.
+	// confirmation): the child's edge derives now, pinned to wP.
 	satisfying := tapreorg.CandidateSpend{
 		Verdict:        tapreorg.VerdictSatisfies,
 		W:              wP,
@@ -675,9 +639,6 @@ func TestReorgRegistryEdgesBeforeParentObserved(t *testing.T) {
 	require.Len(t, edges, 1)
 	require.Equal(t, childID, edges[0].Child)
 	require.Equal(t, wP.TxHash(), edges[0].ParentWitnessTxHash)
-
-	err = store.Withdraw(ctx, parentID, nil)
-	require.ErrorIs(t, err, tapreorg.ErrLiveDependents)
 
 	// Re-recording the candidate (a re-confirmation) leaves the
 	// single edge untouched.
@@ -872,7 +833,8 @@ func TestReorgRegistryBurialSettlesEdges(t *testing.T) {
 // invariant: once an anchoring's sensed phase is terminal, SetPhase
 // refuses to move it, whatever the caller derived. The sensing loop's
 // terminal check reads in a different transaction than its write, so
-// the row itself must hold the line against a concurrent Withdraw.
+// the row itself must hold the line against a concurrent terminal
+// write.
 func TestReorgRegistryTerminalAbsorbing(t *testing.T) {
 	t.Parallel()
 
@@ -895,26 +857,6 @@ func TestReorgRegistryTerminalAbsorbing(t *testing.T) {
 	a, err := store.GetAnchoring(ctx, id)
 	require.NoError(t, err)
 	require.True(t, tapreorg.PhaseEqual(buried, a.Phase))
-
-	// The Withdraw shape of the same race: a withdrawal commits
-	// between the sensing loop's terminal check and its write. The
-	// straggling write must lose, and the withdrawal outcome must
-	// survive intact, sensed and delivered alike.
-	id2, err := store.Register(
-		ctx, testSpec(t, "porter", testOutPoint(32, 0)), 500, nil, nil,
-	)
-	require.NoError(t, err)
-	require.NoError(t, store.Withdraw(ctx, id2, nil))
-
-	err = store.SetPhase(ctx, id2, tapreorg.Witnessed{W: w})
-	require.ErrorIs(t, err, tapreorg.ErrTerminalPhase)
-
-	a2, err := store.GetAnchoring(ctx, id2)
-	require.NoError(t, err)
-	require.True(t, tapreorg.PhaseEqual(tapreorg.Withdrawn{}, a2.Phase))
-	require.True(t, tapreorg.PhaseEqual(
-		tapreorg.Withdrawn{}, a2.DeliveredPhase,
-	))
 }
 
 // TestReorgRegistryCertifiedForeclosureFrozen pins the edge-level

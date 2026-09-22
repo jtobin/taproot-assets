@@ -483,14 +483,12 @@ func (c *ChainPlanter) DispatchMintPublish(ctx context.Context,
 // not essential: they identify THIS batch's signing choice, not any
 // batch signing choice for the same seedlings. If the batch is ever
 // replaced or refunded with different inputs (RBF or manual
-// re-signing on abandon-and-retry), the anchoring must be Withdrawn
-// and a fresh registration issued on the replacement's inputs —
-// otherwise the original anchoring watches inputs that will never be
-// spent while the actual confirming transaction goes unwitnessed. The
-// cultivator does not currently exercise this path (batches are
-// abandon-and-recreate, and the fresh batch registers its own
-// anchoring), but any future RBF or same-batch re-fund must call
-// Withdraw + register anew.
+// re-signing on abandon-and-retry), a fresh registration must be
+// issued on the replacement's inputs, and the original anchoring is
+// left watching inputs that will never be spent; the registry offers
+// no disposal for it. The cultivator does not exercise this path:
+// batches are abandon-and-recreate, and the fresh batch registers its
+// own anchoring.
 func (b *Cultivator) registerMintAnchoring(ctx context.Context,
 	signedTx *wire.MsgTx) error {
 
@@ -808,10 +806,6 @@ func (b *Cultivator) readMintAnchoring(ctx context.Context,
 
 	case tapreorg.Abandoned:
 		return &mintAnchoringOutcome{abandoned: true}, false, nil
-
-	case tapreorg.Withdrawn:
-		return nil, false, fmt.Errorf("mint anchoring %d withdrawn",
-			anchoringID)
 	}
 
 	return nil, false, nil

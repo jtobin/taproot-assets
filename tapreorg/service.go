@@ -501,27 +501,6 @@ func (w *Watcher) RegisterBatch(ctx context.Context,
 	return ids, nil
 }
 
-// Withdraw revokes a live stake: the site's withdrawal write and the
-// terminal registry advance commit in one transaction, and sensing
-// stops.
-func (w *Watcher) Withdraw(ctx context.Context, id AnchoringID,
-	onWithdraw func(context.Context, RegistryTx) error) error {
-
-	if err := w.cfg.Registry.Withdraw(ctx, id, onWithdraw); err != nil {
-		return err
-	}
-
-	// The withdrawal is committed; tearing down the sensor is
-	// best-effort bookkeeping (a leftover sensor stops itself on
-	// its next re-derivation, which sees the terminal phase).
-	if err := w.sendEvent(ctx, evStopSensing{id: id}); err != nil {
-		log.Warnf("Anchoring %d: stop-sensing hand-off failed: %v",
-			id, err)
-	}
-
-	return nil
-}
-
 // Anchoring reads one anchoring, live or terminal, from the registry.
 func (w *Watcher) Anchoring(ctx context.Context,
 	id AnchoringID) (*Anchoring, error) {
@@ -1993,10 +1972,9 @@ func (w *Watcher) rederive(ctx context.Context, id AnchoringID) {
 	}
 
 	if err := w.cfg.Registry.SetPhase(ctx, id, derived); err != nil {
-		// A concurrent writer — a site-initiated withdrawal —
-		// pinned the row terminal between the check above and
-		// this write; the row-level guard held. Resensing
-		// adopts the terminal outcome.
+		// A concurrent writer pinned the row terminal between
+		// the check above and this write; the row-level guard
+		// held. Resensing adopts the terminal outcome.
 		if errors.Is(err, ErrTerminalPhase) {
 			log.Infof("Anchoring %d: pinned terminal by a "+
 				"concurrent writer, resensing", id)
@@ -2381,12 +2359,6 @@ func dispatchPhase(ctx context.Context, site Site, tx RegistryTx,
 
 	case Abandoned:
 		return site.OnAbandoned(ctx, tx, anchoring)
-
-	case Withdrawn:
-		// Withdrawal is site-initiated; sensed and delivered
-		// advance together at withdrawal time, so no delivery
-		// ever targets it.
-		return fmt.Errorf("withdrawn is never delivered")
 
 	default:
 		return fmt.Errorf("unknown phase %T", target)

@@ -14,10 +14,6 @@ var (
 	// not resolve to a registry row.
 	ErrAnchoringNotFound = errors.New("anchoring not found")
 
-	// ErrLiveDependents is returned when a withdrawal is attempted
-	// on an anchoring that live anchorings still depend on.
-	ErrLiveDependents = errors.New("anchoring has live dependents")
-
 	// ErrTerminalPhase is returned when an operation requires a
 	// live anchoring but the anchoring is terminal.
 	ErrTerminalPhase = errors.New("anchoring is terminal")
@@ -255,14 +251,6 @@ type Registry interface {
 	// next-attempt time has passed.
 	PendingDeliveries(ctx context.Context,
 		now time.Time) ([]*Anchoring, error)
-
-	// Withdraw runs the site's withdrawal write and moves the
-	// anchoring to Withdrawn in one transaction. It refuses when
-	// live anchorings still depend on this one
-	// (ErrLiveDependents), and when the anchoring is already
-	// terminal (ErrTerminalPhase).
-	Withdraw(ctx context.Context, id AnchoringID,
-		onWithdraw func(context.Context, RegistryTx) error) error
 
 	// DependencyEdges returns the edges from live children to the
 	// given parent.

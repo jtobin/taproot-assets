@@ -147,7 +147,7 @@ func genForeignSpend(t *rapid.T, label string, maxHeight uint32) ForeignSpend {
 func genPhase(t *rapid.T) Phase {
 	const maxHeight = 1_000_000
 
-	switch rapid.IntRange(0, 6).Draw(t, "phaseKind") {
+	switch rapid.IntRange(0, 5).Draw(t, "phaseKind") {
 	case 0:
 		return Unwitnessed{}
 
@@ -173,16 +173,13 @@ func genPhase(t *rapid.T) Phase {
 			Spend: genForeignSpend(t, "burial", maxHeight),
 		}}
 
-	case 5:
+	default:
 		return Abandoned{Cause: Foreclosed{
 			Parent: AnchoringID(rapid.Int64Range(1, 1<<40).Draw(
 				t, "parent",
 			)),
 			W: genWitness(t, "foreclosing", maxHeight),
 		}}
-
-	default:
-		return Withdrawn{}
 	}
 }
 
@@ -222,7 +219,6 @@ func TestPhaseNameRoundTrip(t *testing.T) {
 	codes := []PhaseCode{
 		PhaseCodeUnwitnessed, PhaseCodeWitnessed,
 		PhaseCodeConflicted, PhaseCodeBuried, PhaseCodeAbandoned,
-		PhaseCodeWithdrawn,
 	}
 	for _, code := range codes {
 		back, err := PhaseCodeFromName(code.String())
@@ -287,9 +283,9 @@ func genHostileView(t *rapid.T, maxHeight uint32) ChainView {
 }
 
 // TestDerivePhaseTotal asserts totality and the conservative reading
-// over hostile views: derivation always yields a well-formed,
-// non-Withdrawn phase, act phases derive only from certifications,
-// and contradictory evidence never buries or compensates.
+// over hostile views: derivation always yields a well-formed phase,
+// act phases derive only from certifications, and contradictory
+// evidence never buries or compensates.
 func TestDerivePhaseTotal(t *testing.T) {
 	t.Parallel()
 
@@ -299,10 +295,6 @@ func TestDerivePhaseTotal(t *testing.T) {
 
 		p := DerivePhase(view)
 		require.NotNil(rt, p)
-
-		// Withdrawn is never derived.
-		_, isWithdrawn := p.(Withdrawn)
-		require.False(rt, isWithdrawn)
 
 		// The derived phase is well-formed: it encodes.
 		_, _, err := EncodePhase(p)

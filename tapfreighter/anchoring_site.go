@@ -760,10 +760,6 @@ func (p *ChainPorter) waitForAnchoringOutcome(ctx context.Context,
 
 		case tapreorg.Abandoned:
 			return &anchoringOutcome{abandoned: true}, nil
-
-		case tapreorg.Withdrawn:
-			return nil, fmt.Errorf("anchoring %d withdrawn",
-				pkg.AnchoringID)
 		}
 
 		select {

@@ -68,7 +68,6 @@ type Querier interface {
 	// The live gauge's rollup: counts grouped in the database, so a
 	// metrics scrape never materializes anchoring rows.
 	CountLiveReorgAnchoringsByPhase(ctx context.Context) ([]CountLiveReorgAnchoringsByPhaseRow, error)
-	CountLiveReorgDependents(ctx context.Context, parentID int64) (int64, error)
 	// The live claimants of an anchor point other than the given
 	// (abandoned) transfer: unconfirmed transfers, not superseded, that
 	// spend the point. A revived rival is one — its replacement is still
@@ -328,7 +327,7 @@ type Querier interface {
 	InsertNewSyncEvent(ctx context.Context, arg InsertNewSyncEventParams) error
 	InsertPassiveAsset(ctx context.Context, arg InsertPassiveAssetParams) error
 	// Phase codes mirror tapreorg.PhaseCode: 0 unwitnessed, 1 witnessed,
-	// 2 conflicted, 3 buried, 4 abandoned, 5 withdrawn. Codes >= 3 are
+	// 2 conflicted, 3 buried, 4 abandoned. Codes >= 3 are
 	// terminal. Verdict codes mirror tapreorg.Verdict: 0 satisfies, 1
 	// foreign. The literals below must stay in sync with those enums.
 	InsertReorgAnchoring(ctx context.Context, arg InsertReorgAnchoringParams) (int64, error)
@@ -518,8 +517,8 @@ type Querier interface {
 	// resets with it; a systematically failing handler re-sticks after
 	// the usual number of attempts. Terminal phases are absorbing at the
 	// row level: a write racing another writer's terminal transition
-	// (a site-initiated withdrawal, most likely) matches no rows, and
-	// the caller observes the refusal via the row count.
+	// matches no rows, and the caller observes the refusal via the row
+	// count.
 	SetReorgAnchoringPhase(ctx context.Context, arg SetReorgAnchoringPhaseParams) (int64, error)
 	// Sets the content-hash key for a single supply update event row.
 	// Used by the programmatic migration that backfills pre-existing

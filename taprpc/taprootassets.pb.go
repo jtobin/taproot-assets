@@ -7493,7 +7493,7 @@ type ListAnchoringsRequest struct {
 	Site string `protobuf:"bytes,1,opt,name=site,proto3" json:"site,omitempty"`
 	// Only return anchorings whose sensed phase has exactly this
 	// name, when set: one of unwitnessed, witnessed, conflicted,
-	// buried, abandoned, withdrawn. Any other value is an error.
+	// buried, abandoned. Any other value is an error.
 	Phase string `protobuf:"bytes,2,opt,name=phase,proto3" json:"phase,omitempty"`
 	// Only return anchorings whose delivery is flagged stuck.
 	StuckOnly bool `protobuf:"varint,3,opt,name=stuck_only,json=stuckOnly,proto3" json:"stuck_only,omitempty"`
@@ -7623,9 +7623,9 @@ type Anchoring struct {
 	// The owning site.
 	Site string `protobuf:"bytes,2,opt,name=site,proto3" json:"site,omitempty"`
 	// The sensed phase: the registry's derived truth. One of
-	// unwitnessed, witnessed, conflicted, buried, abandoned,
-	// withdrawn — the same vocabulary the request's phase filter
-	// takes, so a listed value filters verbatim.
+	// unwitnessed, witnessed, conflicted, buried, abandoned — the same
+	// vocabulary the request's phase filter takes, so a listed value
+	// filters verbatim.
 	Phase string `protobuf:"bytes,3,opt,name=phase,proto3" json:"phase,omitempty"`
 	// The phase the owning site last durably acknowledged, in the
 	// same vocabulary as phase. The site is converged when this
