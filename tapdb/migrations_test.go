@@ -1986,7 +1986,9 @@ func TestMigration72BackfillsProofProvenance(t *testing.T) {
 		AssetID:   assetID,
 		ProofFile: blob,
 	}))
-	unindexed, err := db.FetchUnindexedAssetProofs(ctx, 10)
+	unindexed, err := db.FetchUnindexedAssetProofs(
+		ctx, sqlc.FetchUnindexedAssetProofsParams{RowLimit: 10},
+	)
 	require.NoError(t, err)
 	require.Len(t, unindexed, 1)
 
@@ -1995,7 +1997,9 @@ func TestMigration72BackfillsProofProvenance(t *testing.T) {
 	))
 	require.NoError(t, err)
 
-	unindexed, err = db.FetchUnindexedAssetProofs(ctx, 10)
+	unindexed, err = db.FetchUnindexedAssetProofs(
+		ctx, sqlc.FetchUnindexedAssetProofsParams{RowLimit: 10},
+	)
 	require.NoError(t, err)
 	require.Empty(t, unindexed)
 
