@@ -2010,6 +2010,95 @@ func TestMigration72BackfillsProofProvenance(t *testing.T) {
 	require.Positive(t, anchorCount)
 }
 
+// TestMigration72LeavesUndecodableProofUnindexed asserts that migration 72
+// indexes every proof that decodes and leaves a proof that fails to decode
+// unindexed.
+func TestMigration72LeavesUndecodableProofUnindexed(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := NewTestDBWithVersion(t, 71)
+	_, assetStore := newAssetStoreFromDB(db.BaseDB)
+
+	assetGen := newAssetGenerator(t, 2, 1)
+	assetGen.genAssets(t, assetStore, []assetDesc{{
+		assetGen:    assetGen.assetGens[0],
+		anchorPoint: assetGen.anchorPoints[0],
+		amt:         10,
+	}, {
+		assetGen:    assetGen.assetGens[1],
+		anchorPoint: assetGen.anchorPoints[1],
+		amt:         10,
+	}})
+
+	type proofRow struct {
+		proofID int64
+		assetID int64
+		blob    []byte
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT proof_id, asset_id, proof_file
+		FROM asset_proofs
+		ORDER BY proof_id
+	`)
+	require.NoError(t, err)
+	var proofRows []proofRow
+	for rows.Next() {
+		var row proofRow
+		require.NoError(t, rows.Scan(
+			&row.proofID, &row.assetID, &row.blob,
+		))
+		proofRows = append(proofRows, row)
+	}
+	require.NoError(t, rows.Close())
+	require.Len(t, proofRows, 2)
+
+	// Write both proofs as a pre-index binary would, the first truncated
+	// so that it fails to decode.
+	undecodable, decodable := proofRows[0], proofRows[1]
+	require.NoError(t, db.UpsertAssetProofByID(ctx, ProofUpdateByID{
+		AssetID:   undecodable.assetID,
+		ProofFile: undecodable.blob[:len(undecodable.blob)/2],
+	}))
+	require.NoError(t, db.UpsertAssetProofByID(ctx, ProofUpdateByID{
+		AssetID:   decodable.assetID,
+		ProofFile: decodable.blob,
+	}))
+
+	err = db.ExecuteMigrations(TargetLatest, WithProgrammaticMigrations(
+		makeProgrammaticMigrations(db, programmaticMigrations, true),
+	))
+	require.NoError(t, err)
+
+	unindexed, err := db.FetchUnindexedAssetProofs(
+		ctx, sqlc.FetchUnindexedAssetProofsParams{RowLimit: 10},
+	)
+	require.NoError(t, err)
+	require.Len(t, unindexed, 1)
+	require.Equal(t, undecodable.proofID, unindexed[0].ProofID)
+
+	// Anchor transaction lookups return only the indexed proof.
+	lookup := func(blob []byte) []int64 {
+		file, err := proof.Blob(blob).AsFile()
+		require.NoError(t, err)
+		txIDs, err := file.AnchorTxIDs()
+		require.NoError(t, err)
+		require.Len(t, txIDs, 1)
+
+		found, err := db.FetchAssetProofsByAnchorTx(ctx, txIDs[0][:])
+		require.NoError(t, err)
+
+		proofIDs := make([]int64, 0, len(found))
+		for _, row := range found {
+			proofIDs = append(proofIDs, row.ProofID)
+		}
+
+		return proofIDs
+	}
+	require.Empty(t, lookup(undecodable.blob))
+	require.Equal(t, []int64{decodable.proofID}, lookup(decodable.blob))
+}
+
 // TestMigration61CancelsDuplicatePreBroadcastBatches verifies that the
 // legacy-DB self-heal step in migration 61 preserves the most recent
 // pre-broadcast batch and cancels the rest before the partial unique
